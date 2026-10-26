@@ -30,7 +30,44 @@ SESSION_PREFS = {
     "browser.startup.page": 3,
     "browser.sessionstore.privacy_level": 0,
     "browser.sessionstore.resume_from_crash": True,
+    # Password manager, as in stock Firefox: Camoufox (and Playwright) turn it
+    # off for scraping. Per profile: Firefox offers to save a login on the
+    # first sign-in and autofills it next time; encrypted in logins.json +
+    # key4.db inside the profile folder; about:logins lists them.
+    "signon.rememberSignons": True,
+    "signon.autofillForms": True,
+    "signon.formlessCapture.enabled": True,
+    "signon.generation.enabled": False,  # no "use a generated password" offers
+    "browser.formfill.enable": True,  # form history (usernames, search fields)
+    # Native title bar above the tabs, so the window title (which the badge
+    # addon prefixes with the profile name) is actually visible on macOS.
+    "browser.tabs.inTitlebar": 0,
 }
+
+
+def write_badge_addon(p: dict) -> str:
+    """Tiny per-profile WebExtension that prefixes every window title with the
+    profile name ("FB Anna — Facebook — Camoufox"), so open profiles are told
+    apart at a glance. windows.update(titlePreface) is browser chrome only:
+    document.title and anything a page can read stay untouched. userChrome.css
+    is not an option: Camoufox does not load legacy profile customizations."""
+    d = store.profile_dir(p["id"]) / "badge-addon"
+    d.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "manifest_version": 2,
+        "name": f"Профиль: {p['name']}",
+        "description": "Имя профиля в заголовке окна (antidetect-manager)",
+        "version": "1.0",
+        "browser_specific_settings": {"gecko": {"id": f"badge-{p['id']}@antidetect-manager"}},
+        "background": {"scripts": ["background.js"]},
+    }
+    (d / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1))
+    (d / "background.js").write_text(
+        f"const PREFACE = {json.dumps(p['name'] + ' — ', ensure_ascii=False)};\n"
+        "const apply = (id) => browser.windows.update(id, { titlePreface: PREFACE }).catch(() => {});\n"
+        "browser.windows.getAll().then((ws) => ws.forEach((w) => apply(w.id)));\n"
+        "browser.windows.onCreated.addListener((w) => apply(w.id));\n")
+    return str(d)
 
 
 def main_locale(country: str) -> str:
@@ -96,6 +133,59 @@ async def _drop_extra_blank_tabs(ctx):
             await p.close()
 
 
+def _close_with_last_window(ctx, closed: asyncio.Event, last_tabs):
+    """Closing the last window (red button / Cmd-W) leaves Firefox running
+    without windows on macOS, so the profile would stay "running" forever and
+    the next click on the Dock icon opens an empty window. Treat it as closing
+    the profile: when no page is left for a moment, finish the launch.
+    Firefox then has no window to restore next time, so the tab URLs are
+    remembered in last_tabs and reopened on the next launch."""
+    loop = asyncio.get_running_loop()
+    urls = {}  # page -> last main-frame url
+
+    def on_page_close(page):
+        async def check():
+            await asyncio.sleep(1.0)  # Cmd-N first opens a page, then closes the old one
+            if not ctx.pages:
+                tabs = [u for u in urls.values() if u and u != "about:blank"]
+                last_tabs.write_text(json.dumps(tabs)) if tabs else None
+                closed.set()
+        loop.create_task(check())
+
+    def watch(page):
+        urls[page] = page.url
+
+        def nav(frame):
+            if frame == page.main_frame:
+                urls[page] = frame.url
+        page.on("framenavigated", nav)
+        page.on("close", on_page_close)
+
+    for p in ctx.pages:
+        watch(p)
+    ctx.on("page", watch)
+
+
+async def _reopen_last_tabs(ctx, last_tabs):
+    """Session restore gives nothing back after the user closed the last window
+    (see _close_with_last_window): reopen the remembered tabs instead."""
+    if not last_tabs.exists():
+        return
+    try:
+        tabs = json.loads(last_tabs.read_text())
+    finally:
+        last_tabs.unlink(missing_ok=True)
+    if not tabs or any(p.url != "about:blank" for p in ctx.pages):
+        return
+    page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+    for i, url in enumerate(tabs):
+        p = page if i == 0 else await ctx.new_page()
+        try:
+            await p.goto(url, wait_until="commit", timeout=30000)
+        except Exception:
+            pass
+
+
 async def launch(ref: str, url: str | None = None, headless: bool = False, on_ready=None):
     db = store.connect()
     p = store.get(db, ref)
@@ -154,6 +244,9 @@ async def launch(ref: str, url: str | None = None, headless: bool = False, on_re
         opts["firefox_user_prefs"]["network.proxy.socks_remote_dns"] = True
 
     store.update(db, p["id"], last_used_at=int(time.time()))
+    opts["addons"] = [write_badge_addon(p)]
+    from .engine import apply_patches
+    apply_patches()  # engine may have been (re)installed by hand; keeps logins enabled
     try:
         async with AsyncCamoufox(**opts) as ctx:
             # Subscribe before anything can close the context, or wait() hangs forever.
@@ -165,7 +258,10 @@ async def launch(ref: str, url: str | None = None, headless: bool = False, on_re
             for sig in (signal.SIGTERM, signal.SIGINT):
                 loop.add_signal_handler(sig, closed.set)
             await _drop_extra_blank_tabs(ctx)
+            last_tabs = store.profile_dir(p["id"]) / "last_tabs.json"
+            await _reopen_last_tabs(ctx, last_tabs)
             page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+            _close_with_last_window(ctx, closed, last_tabs)
             if url:
                 await page.goto(url)
             if on_ready:

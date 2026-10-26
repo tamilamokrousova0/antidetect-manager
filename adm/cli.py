@@ -161,6 +161,9 @@ def cmd_engine(args, db):
         st = engine.status()
         _out(args, st, f"camoufox {st['package']}, browser: {st['browser'] or 'NOT INSTALLED'}, "
                        f"geoip: {'ok' if st['geoip'] else 'missing'}  ({st['cache_dir']})")
+    elif args.action == "patch":
+        r = engine.apply_patches()
+        _out(args, r, json.dumps(r, ensure_ascii=False))
     else:
         engine.fetch(engine.print_progress(args.json))
 
@@ -206,7 +209,7 @@ def main(argv=None):
     c.set_defaults(fn=cmd_set)
 
     c = sub.add_parser("engine", help="browser engine in ~/Library/Caches/camoufox")
-    c.add_argument("action", choices=("status", "fetch"))
+    c.add_argument("action", choices=("status", "fetch", "patch"))
     c.set_defaults(fn=cmd_engine)
 
     c = sub.add_parser("check", help="check proxy of a profile, or 'all'")
