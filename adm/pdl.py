@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import urllib.request
 
 
@@ -40,12 +41,27 @@ def download(url: str, dest_fileobj, parts: int = 16, progress=None) -> int:
                 progress(sum(done), size)
         raise RuntimeError(f"part {i} failed after retries")
 
+    # curl writes each part as it goes; report the real byte count every second
+    # instead of only when a 65 MB part completes (the UI shows this).
+    stop = threading.Event()
+
+    def monitor():
+        while not stop.wait(1):
+            have = sum(os.path.getsize(f) for f in (os.path.join(tmp, f"p{i}") for i in range(parts)) if os.path.exists(f))
+            if progress:
+                progress(min(have, size), size)
+
+    mon = threading.Thread(target=monitor, daemon=True)
     try:
+        if progress:
+            mon.start()
         with cf.ThreadPoolExecutor(parts) as ex:
             list(ex.map(get, range(parts)))
+        stop.set()
         for i in range(parts):
             with open(os.path.join(tmp, f"p{i}"), "rb") as f:
                 shutil.copyfileobj(f, dest_fileobj)
         return size
     finally:
+        stop.set()
         shutil.rmtree(tmp, ignore_errors=True)

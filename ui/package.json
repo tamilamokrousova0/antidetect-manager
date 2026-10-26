@@ -1,11 +1,13 @@
 {
   "name": "antidetect-manager-ui",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "node build/write-adm-home.js && electron-builder --mac dir --arm64"
+    "bundle": "build/make-bundle.sh",
+    "dist": "electron-builder --mac dir --arm64",
+    "dist:dmg": "electron-builder --mac dmg zip --arm64"
   },
   "devDependencies": {
     "electron": "45.0.0",
@@ -25,8 +27,7 @@
       "preload.js",
       "index.html",
       "renderer.js",
-      "style.css",
-      "adm-home.json"
+      "style.css"
     ],
     "mac": {
       "target": [
@@ -41,7 +42,34 @@
       "category": "public.app-category.productivity",
       "identity": null,
       "extendInfo": {
-        "NSDocumentsFolderUsageDescription": "Приложение запускает менеджер профилей из папки проекта в Документах."
+        "NSAppleEventsUsageDescription": "Чтение списка шрифтов системы для профилей macOS."
+      }
+    },
+    "extraResources": [
+      {
+        "from": "bundle",
+        "to": "adm"
+      }
+    ],
+    "afterPack": "build/afterpack.js",
+    "artifactName": "Antidetect-Manager-${version}-${arch}.${ext}",
+    "dmg": {
+      "title": "Antidetect Manager",
+      "contents": [
+        {
+          "x": 140,
+          "y": 180
+        },
+        {
+          "x": 420,
+          "y": 180,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
+      "window": {
+        "width": 560,
+        "height": 380
       }
     }
   }

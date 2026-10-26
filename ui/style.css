@@ -173,3 +173,14 @@ fieldset.cookies legend { color: var(--muted); font-size: 12px; padding: 0 4px; 
 label.inline { flex-direction: row; align-items: center; gap: 6px; }
 #ckResult { font-size: 12px; -webkit-user-select: text; user-select: text; white-space: pre-wrap; }
 #ckResult:empty { display: none; }
+
+/* first run: engine download */
+.engine { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 20; }
+.engine-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 22px 24px; width: 440px; box-shadow: 0 12px 40px rgba(0,0,0,.25); }
+.engine-card h2 { margin: 0 0 8px; font-size: 15px; }
+.engine-card p { margin: 0 0 14px; color: var(--muted); }
+.engine-card .btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+.engine-progress { margin-top: 6px; }
+.engine-progress .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+.engine-progress .bar div { height: 100%; width: 0; background: var(--accent); transition: width .4s; }
+.engine-progress .muted { margin-top: 6px; font-size: 12px; }

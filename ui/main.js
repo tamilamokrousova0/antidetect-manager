@@ -4,11 +4,11 @@ const os = require('os');
 const { spawn } = require('child_process');
 const path = require('path');
 
-// Dev: ui/ sits inside the project. Packaged .app: path baked in at build time.
-function admHome() {
-  try { return require('./adm-home.json').path; } catch { return path.resolve(__dirname, '..'); }
-}
-const ADM = path.join(admHome(), 'adm.sh');
+// Packaged .app: Contents/Resources/adm/ carries Python + packages + adm
+// (ui/build/make-bundle.sh). Dev (`electron .`): ui/ sits inside the project.
+const ADM = app.isPackaged
+  ? path.join(process.resourcesPath, 'adm', 'run')
+  : path.join(path.resolve(__dirname, '..'), 'adm.sh');
 
 let win;
 // profileId -> { proc, state: 'starting' | 'running', log: string[] }
@@ -163,6 +163,34 @@ ipcMain.handle('cookies-copy', (_e, id) => withCookieLock(id, async () => {
 ipcMain.handle('launch', (_e, id) => launchProfile(id));
 ipcMain.handle('stop', (_e, id) => stopProfile(id));
 ipcMain.handle('running', () => Object.fromEntries([...running].map(([id, e]) => [id, e.state])));
+
+// ---------- browser engine (first run: ~1.3 GB download into ~/Library/Caches/camoufox) ----------
+let engineFetch = null;
+ipcMain.handle('engine-status', () => runAdm(['engine', 'status']));
+ipcMain.handle('engine-fetch', () => new Promise((resolve, reject) => {
+  if (engineFetch) return resolve(false);
+  const proc = spawn(ADM, ['--json', 'engine', 'fetch']);
+  engineFetch = proc;
+  let err = '', buf = '';
+  proc.stdout.on('data', (d) => {
+    buf += d;
+    const lines = buf.split('\n');
+    buf = lines.pop();
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let ev;
+      try { ev = JSON.parse(line); } catch { continue; }
+      if (win && !win.isDestroyed()) win.webContents.send('engine-progress', ev);
+    }
+  });
+  proc.stderr.on('data', (d) => { err += d; if (err.length > 20000) err = err.slice(-20000); });
+  proc.on('error', (e) => { engineFetch = null; reject(e); });
+  proc.on('close', (code) => {
+    engineFetch = null;
+    if (code === 0) resolve(true);
+    else reject(new Error(lastErrorLine(err) || `engine fetch exited with ${code}`));
+  });
+}));
 
 function createWindow() {
   win = new BrowserWindow({

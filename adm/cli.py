@@ -155,6 +155,16 @@ def cmd_cookies_import(args, db):
                     + "".join(f"\n  ! {x}" for x in res["failed"] + skipped))
 
 
+def cmd_engine(args, db):
+    from . import engine
+    if args.action == "status":
+        st = engine.status()
+        _out(args, st, f"camoufox {st['package']}, browser: {st['browser'] or 'NOT INSTALLED'}, "
+                       f"geoip: {'ok' if st['geoip'] else 'missing'}  ({st['cache_dir']})")
+    else:
+        engine.fetch(engine.print_progress(args.json))
+
+
 def cmd_delete(args, db):
     p = store.get(db, args.profile) or sys.exit("not found")
     store.delete(db, p["id"])
@@ -194,6 +204,10 @@ def main(argv=None):
     c.add_argument("--locale", help="e.g. en-US; '' = auto by proxy country")
     c.add_argument("--notes")
     c.set_defaults(fn=cmd_set)
+
+    c = sub.add_parser("engine", help="browser engine in ~/Library/Caches/camoufox")
+    c.add_argument("action", choices=("status", "fetch"))
+    c.set_defaults(fn=cmd_engine)
 
     c = sub.add_parser("check", help="check proxy of a profile, or 'all'")
     c.add_argument("profile")

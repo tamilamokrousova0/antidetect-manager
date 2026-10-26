@@ -22,7 +22,7 @@ PYTHONPATH="$ROOT" .venv/bin/python tests/test_cookies.py
 ./adm.sh list >/dev/null
 
 echo "== Приложение"
-(cd ui && npm install --no-audit --no-fund)
+(cd ui && npm install --no-audit --no-fund && npm run bundle)
 ui/build/install-app.sh
 
 if ! defaults read com.apple.dock persistent-apps 2>/dev/null | grep -q "Antidetect%20Manager.app"; then
@@ -30,5 +30,4 @@ if ! defaults read com.apple.dock persistent-apps 2>/dev/null | grep -q "Antidet
   killall Dock
 fi
 echo
-echo "Готово: Antidetect Manager в /Applications и в Dock."
-echo "Папку проекта не переносить (путь зашит в приложение); после переноса — ui/build/install-app.sh"
+echo "Готово: Antidetect Manager в /Applications и в Dock (самодостаточный .app, папку проекта можно переносить)."

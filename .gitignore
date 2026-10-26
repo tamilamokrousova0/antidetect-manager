@@ -5,3 +5,4 @@ ui/node_modules/
 ui/dist/
 ui/adm-home.json
 .DS_Store
+ui/bundle/

@@ -15,4 +15,7 @@ contextBridge.exposeInMainWorld('adm', {
   stop: (id) => ipcRenderer.invoke('stop', id),
   running: () => ipcRenderer.invoke('running'),
   onState: (cb) => ipcRenderer.on('profile-state', (_e, s) => cb(s)),
+  engineStatus: () => ipcRenderer.invoke('engine-status'),
+  engineFetch: () => ipcRenderer.invoke('engine-fetch'),
+  onEngineProgress: (cb) => ipcRenderer.on('engine-progress', (_e, s) => cb(s)),
 });

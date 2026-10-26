@@ -5,19 +5,29 @@
 
 ## Установка на Mac
 
-Нужны Apple Silicon и [Homebrew](https://brew.sh).
+Нужен Mac на Apple Silicon (M1 и новее).
+
+1. Скачать `Antidetect-Manager-<версия>-arm64.dmg` из [Releases](https://github.com/tamilamokrousova0/antidetect-manager/releases), открыть и перетащить приложение в «Программы».
+2. Снять карантин (приложение не подписано Apple Developer ID, иначе macOS скажет «повреждено» или «не удаётся проверить разработчика»):
+   ```sh
+   xattr -dr com.apple.quarantine "/Applications/Antidetect Manager.app"
+   ```
+   Альтернатива без терминала: запустить, в «Системные настройки → Конфиденциальность и безопасность» нажать «Открыть всё равно».
+3. При первом запуске приложение предложит скачать движок браузера (Camoufox, ~1.3 ГБ) в `~/Library/Caches/camoufox` — один раз.
+
+Приложение самодостаточно: внутри свой Python и все зависимости, папка проекта, Homebrew и uv не нужны.
+Данные профилей: `~/Library/Application Support/antidetect-manager/` (`ADM_DATA_DIR` переопределяет).
+
+### Из исходников (для разработки)
 
 ```sh
-git clone <этот репозиторий> ~/Documents/Claude/antidetect-manager
+git clone https://github.com/tamilamokrousova0/antidetect-manager ~/Documents/Claude/antidetect-manager
 cd ~/Documents/Claude/antidetect-manager
 ./setup.sh
 ```
+`setup.sh` ставит `uv` и `node` (если их нет), Python-окружение с Camoufox, сам браузер, собирает приложение в `/Applications` и добавляет его в Dock.
 
-`setup.sh` ставит `uv` и `node` (если их нет), Python-окружение с Camoufox, сам браузер (~1.3 ГБ, многопоточная загрузка), собирает приложение **Antidetect Manager** в `/Applications` и добавляет его в Dock.
-Папку проекта после установки не переносить: путь к ней зашит в приложение (после переноса — `ui/build/install-app.sh`).
-При первом запуске macOS может спросить доступ к папке «Документы» — разрешить.
-
-Данные профилей: `~/Library/Application Support/antidetect-manager/` (`ADM_DATA_DIR` переопределяет).
+Сборка дистрибутива: `cd ui && npm run bundle && npm run dist:dmg` → `ui/dist/*.dmg` и `*.zip` (бандл Python + пакеты собирает `ui/build/make-bundle.sh`, подпись ad-hoc в `ui/build/afterpack.js`).
 
 ## Использование
 
@@ -63,7 +73,7 @@ scripts/install-engine-watch.sh
 | `adm/cookies.py` | импорт/экспорт cookies в фоновой сессии без сети |
 | `adm/pdl.py` | многопоточная загрузка больших файлов с GitHub |
 | `adm/cli.py` | CLI |
-| `ui/` | Electron 45: `main.js` вызывает `adm.sh --json`, каждый открытый профиль — отдельный процесс |
+| `ui/` | Electron 45: `main.js` вызывает `adm --json` (в .app — `Contents/Resources/adm/run` со встроенным Python, в dev — `adm.sh`), каждый открытый профиль — отдельный процесс; экран первого запуска качает движок (`adm engine status/fetch`) |
 | `scripts/` | обновление движка, загрузка браузера, сторож обновлений, `live_check.py` |
 | `tests/` | `test_forwarder.py`, `test_cookies.py` (без браузера), `e2e_launch.py`, `socks_server.py` (тестовый SOCKS5 с логином) |
 
@@ -85,6 +95,7 @@ scripts/install-engine-watch.sh
 - Прокси не прошёл проверку → профиль не запускается (иначе сайт увидел бы реальный IP).
 - Сетевой отпечаток выхода (TCP/IP: ОС, MTU) — свойство прокси, браузером не исправляется.
 - launchd не может запускать файлы из `~/Documents` (TCC) — поэтому сторож обновлений копируется в `~/.local/var/`.
+- .app без Developer ID: подпись ad-hoc (`codesign --sign -`), иначе Apple Silicon не запускает изменённый бандл; Gatekeeper у скачавшего всё равно требует снять карантин. Python внутри — python-build-standalone из uv (переносимый), пакеты через `pip --target`, без venv (venv не переносится).
 
 ## Проверка профиля на сайтах
 

@@ -95,6 +95,22 @@
     </aside>
   </main>
 
+  <div id="engine" class="engine" hidden>
+    <div class="engine-card">
+      <h2>Движок браузера не установлен</h2>
+      <p>Профили открываются в Camoufox (Firefox с подменой отпечатка). Его нужно скачать один раз, около 1.3 ГБ, в <span class="mono">~/Library/Caches/camoufox</span>.</p>
+      <div id="engineProgress" class="engine-progress" hidden>
+        <div class="bar"><div id="engineBar"></div></div>
+        <div id="engineText" class="muted"></div>
+      </div>
+      <div id="engineError" class="bad" hidden></div>
+      <div class="btns">
+        <button id="engineFetch" class="primary">Скачать</button>
+        <button id="engineLater" class="ghost">Позже</button>
+      </div>
+    </div>
+  </div>
+
   <footer>
     <div id="selection" hidden>
       <span id="selCount"></span>

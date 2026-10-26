@@ -349,7 +349,49 @@ window.adm.onState(({ id, state, error }) => {
   else render();
 });
 
+// ---------- first run: browser engine ----------
+async function engineGate() {
+  let st;
+  try { st = await window.adm.engineStatus(); } catch (e) { status(errText(e), true); return; }
+  if (st && st.installed) return;
+  $('#engine').hidden = false;
+}
+
+$('#engineLater').onclick = () => { $('#engine').hidden = true; };
+$('#engineFetch').onclick = async () => {
+  const btn = $('#engineFetch');
+  btn.disabled = true; $('#engineLater').disabled = true;
+  $('#engineError').hidden = true;
+  $('#engineProgress').hidden = false;
+  $('#engineText').textContent = 'Подготовка…';
+  try {
+    await window.adm.engineFetch();
+    $('#engine').hidden = true;
+    status('Движок установлен');
+  } catch (e) {
+    $('#engineError').textContent = errText(e);
+    $('#engineError').hidden = false;
+  } finally {
+    btn.disabled = false; $('#engineLater').disabled = false;
+  }
+};
+window.adm.onEngineProgress((ev) => {
+  if (ev.stage === 'browser' && ev.total) {
+    const pct = Math.min(100, Math.round(ev.done / ev.total * 100));
+    $('#engineBar').style.width = pct + '%';
+    $('#engineText').textContent = `${ev.file}: ${(ev.done / 1048576) | 0} / ${(ev.total / 1048576) | 0} МБ (${pct}%)`;
+  } else if (ev.stage === 'browser') {
+    $('#engineText').textContent = `Скачиваю ${ev.file}…`;
+  } else if (ev.stage === 'other') {
+    $('#engineText').textContent = `${ev.file}…`;
+  } else if (ev.stage === 'done') {
+    $('#engineBar').style.width = '100%';
+    $('#engineText').textContent = `Готово: ${ev.browser}`;
+  }
+});
+
 (async () => {
   states = await window.adm.running();
   await busy('Загрузка…', refresh).catch(() => {});
+  await engineGate();
 })();
