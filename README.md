@@ -73,7 +73,7 @@ scripts/install-engine-watch.sh
 | | |
 |---|---|
 | `adm/store.py` | SQLite + папка на профиль |
-| `adm/proxy.py` | парсинг прокси, проверка exit IP / гео (ip-api.com) |
+| `adm/proxy.py` | парсинг прокси, проверка exit IP / гео через цепочку провайдеров: ip-api.com → ipwho.is → ipinfo.io (HTTPS через PySocks); различает «прокси мёртв» и «гео-сервис недоступен» |
 | `adm/socks_forward.py` | локальный форвардер: Firefox не умеет SOCKS5 с логином → 127.0.0.1 без авторизации → прокси с авторизацией; DNS на стороне прокси |
 | `adm/launcher.py` | запуск: проверка прокси (без неё не стартует), geoip → таймзона/геолокация/WebRTC-IP, язык, восстановление сессии |
 | `adm/cookies.py` | импорт/экспорт cookies в фоновой сессии без сети |
@@ -81,7 +81,7 @@ scripts/install-engine-watch.sh
 | `adm/cli.py` | CLI |
 | `ui/` | Electron 45: `main.js` запускает встроенный Python (`<resources>/adm/python`, в dev — `.venv`) с `-m adm.cli --json`, каждый открытый профиль — отдельный процесс, остановка — строка `stop` в stdin (+ SIGTERM вне Windows); экран первого запуска качает движок (`adm engine status/fetch`) |
 | `scripts/` | обновление движка, загрузка браузера, сторож обновлений, `live_check.py` |
-| `tests/` | `test_forwarder.py`, `test_cookies.py` (без браузера), `e2e_launch.py`, `socks_server.py` (тестовый SOCKS5 с логином) |
+| `tests/` | `test_forwarder.py`, `test_cookies.py`, `test_proxy_geo.py` (без браузера), `e2e_launch.py`, `socks_server.py` (тестовый SOCKS5 с логином) |
 
 ## Что закреплено за профилем
 
@@ -101,7 +101,7 @@ scripts/install-engine-watch.sh
 - Проверка прокси читает ровно один HTTP-ответ (по Content-Length / chunked), а не до EOF: часть прокси игнорирует `Connection: close` и держит туннель, из-за чего рабочий прокси раньше считался мёртвым (таймаут 30 с).
 - GPU у mac-профилей «Apple M1, or similar» — так настоящий Firefox показывает любой Apple Silicon.
 - Импорт/экспорт cookies — только у закрытого профиля. Сессионные cookies при импорте получают срок 30 дней. Фоновая сессия ждёт ~3 с восстановления сессии: если закрыть раньше, Firefox сохранит пустую сессию.
-- Прокси не прошёл проверку → профиль не запускается (иначе сайт увидел бы реальный IP).
+- Прокси не прошёл проверку → профиль не запускается (иначе сайт увидел бы реальный IP). Но если прокси отвечает, а недоступны сами гео-сервисы (все три), профиль стартует с гео из прошлой удачной проверки: в таблице у выхода появляется метка «кэш», в stderr — warning. Без прошлой проверки запуск всё равно блокируется (таймзону подставить нечем). `ADM_GEO_PROVIDERS=ipwho.is,ipinfo.io` переопределяет порядок провайдеров (тесты, обход лимита ip-api 45 запросов/мин).
 - Сетевой отпечаток выхода (TCP/IP: ОС, MTU) — свойство прокси, браузером не исправляется.
 - launchd не может запускать файлы из `~/Documents` (TCC) — поэтому сторож обновлений копируется в `~/.local/var/`.
 - Camoufox выключает менеджер паролей не только prefs, но и корпоративной политикой `PasswordManagerEnabled: false` в `Camoufox.app/Contents/Resources/distribution/policies.json` (пref становится locked). `adm engine patch` убирает `PasswordManagerEnabled` / `OfferToSaveLogins` / `DisableFormHistory` (вызывается после `engine fetch` и перед каждым запуском; оригинал — `policies.json.orig`). Бандл Camoufox только linker-signed, без печати ресурсов, поэтому правка не ломает запуск.

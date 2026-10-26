@@ -19,6 +19,7 @@ PYTHONPATH="$ROOT" .venv/bin/python scripts/fetch_browser.py
 echo "== Проверка ядра"
 PYTHONPATH="$ROOT" .venv/bin/python tests/test_forwarder.py
 PYTHONPATH="$ROOT" .venv/bin/python tests/test_cookies.py
+PYTHONPATH="$ROOT" .venv/bin/python tests/test_proxy_geo.py
 ./adm.sh list >/dev/null
 
 echo "== Приложение"

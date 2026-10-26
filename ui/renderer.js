@@ -50,7 +50,8 @@ function exitCell(p) {
   if (!c) return '<span class="muted">не проверен</span>';
   if (!c.ok) return `<span class="bad" title="${esc(c.raw_error || c.error)}">${esc(c.error)}</span>`;
   const flag = c.flag_hosting ? ' <span class="warn" title="ip-api помечает IP как датацентр/хостинг">ДЦ</span>' : '';
-  return `<span title="${esc(c.city)} · ${esc(c.isp)}">${esc(c.country)}</span> <span class="mono">${esc(c.ip)}</span> ${flag} <span class="muted">${c.latency_ms} мс · ${esc(c.city || '')}</span>`;
+  const stale = c.stale ? ` <span class="warn" title="Гео-сервисы были недоступны при запуске, использована прошлая проверка: ${esc(c.stale_reason || '')}">кэш</span>` : '';
+  return `<span title="${esc(c.city)} · ${esc(c.isp)} · ${esc(c.provider || 'ip-api.com')}">${esc(c.country)}</span> <span class="mono">${esc(c.ip)}</span> ${flag}${stale} <span class="muted">${c.latency_ms} мс · ${esc(c.city || '')}</span>`;
 }
 
 function matches(p, q, tag) {

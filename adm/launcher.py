@@ -300,6 +300,14 @@ async def launch(ref: str, url: str | None = None, headless: bool = False, on_re
         # Re-check every launch: exit IP may have rotated, and timezone/geo
         # must match the IP the sites will actually see.
         chk = await check_proxy(px)
+        if not chk["ok"] and chk.get("proxy_alive") and (p.get("proxy_check") or {}).get("ok"):
+            # The tunnel works, only the geo services are down: start with the
+            # last good geo instead of blocking every profile on a third party.
+            prev = p["proxy_check"]
+            chk = {**prev, "stale": True, "stale_reason": chk["error"], "stale_at": int(time.time())}
+            print(f"warning: гео-сервисы недоступны, запуск с прошлой проверкой "
+                  f"({prev.get('ip')} {prev.get('country')} {prev.get('timezone')}): {chk['stale_reason']}",
+                  file=sys.stderr, flush=True)
         store.update(db, p["id"], proxy_check=chk)
         if not chk["ok"]:
             raise SystemExit(f"прокси не прошёл проверку, запуск отменён (иначе сайт увидел бы реальный IP): {chk['error']}")
