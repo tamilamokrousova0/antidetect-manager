@@ -4,11 +4,30 @@ const os = require('os');
 const { spawn } = require('child_process');
 const path = require('path');
 
-// Packaged .app: Contents/Resources/adm/ carries Python + packages + adm
-// (ui/build/make-bundle.sh). Dev (`electron .`): ui/ sits inside the project.
-const ADM = app.isPackaged
-  ? path.join(process.resourcesPath, 'adm', 'run')
-  : path.join(path.resolve(__dirname, '..'), 'adm.sh');
+// Packaged app: <resources>/adm/ carries a Python runtime + packages + the adm
+// core (ui/build/make-bundle.js). Dev (`electron .`): the project's .venv.
+const WIN = process.platform === 'win32';
+function pythonCmd() {
+  if (app.isPackaged) {
+    const root = path.join(process.resourcesPath, 'adm');
+    return {
+      cmd: WIN ? path.join(root, 'python', 'python.exe') : path.join(root, 'python', 'bin', 'python3'),
+      env: { PYTHONPATH: [root, path.join(root, 'pylib')].join(path.delimiter), PYTHONNOUSERSITE: '1', PYTHONDONTWRITEBYTECODE: '1' },
+    };
+  }
+  const proj = path.resolve(__dirname, '..');
+  return {
+    cmd: WIN ? path.join(proj, '.venv', 'Scripts', 'python.exe') : path.join(proj, '.venv', 'bin', 'python'),
+    env: { PYTHONPATH: proj },
+  };
+}
+function spawnAdm(args) {
+  const py = pythonCmd();
+  return spawn(py.cmd, ['-m', 'adm.cli', '--json', ...args], {
+    env: { ...process.env, ...py.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', ADM_UI: '1' },
+    windowsHide: true,
+  });
+}
 
 let win;
 // profileId -> { proc, state: 'starting' | 'running', log: string[] }
@@ -25,7 +44,7 @@ async function withCookieLock(id, fn) {
 
 function runAdm(args) {
   return new Promise((resolve, reject) => {
-    const p = spawn(ADM, ['--json', ...args]);
+    const p = spawnAdm(args);
     let out = '', err = '';
     p.stdout.on('data', (d) => (out += d));
     p.stderr.on('data', (d) => (err += d));
@@ -53,7 +72,7 @@ function emitState(id, state, error) {
 function launchProfile(id) {
   if (running.has(id)) return;
   if (cookieBusy.has(id)) throw new Error('Идёт импорт/экспорт cookies — запустите после завершения');
-  const proc = spawn(ADM, ['--json', 'launch', id]);
+  const proc = spawnAdm(['launch', id]);
   const entry = { proc, state: 'starting', log: [] };
   running.set(id, entry);
   emitState(id, 'starting');
@@ -81,9 +100,12 @@ function stopProfile(id) {
   const entry = running.get(id);
   if (!entry) return;
   entry.stopping = true;
-  entry.proc.kill('SIGTERM');
+  // "stop" on stdin works on every platform (the launcher watches it when
+  // ADM_UI=1); SIGTERM is the second channel where the loop supports it.
+  try { entry.proc.stdin.write('stop\n'); entry.proc.stdin.end(); } catch { /* already gone */ }
+  if (!WIN) entry.proc.kill('SIGTERM');
   // Hard kill if the browser refuses to close.
-  setTimeout(() => running.get(id) === entry && entry.proc.kill('SIGKILL'), 8000);
+  setTimeout(() => running.get(id) === entry && entry.proc.kill(WIN ? undefined : 'SIGKILL'), 8000);
 }
 
 ipcMain.handle('list', () => runAdm(['list']));
@@ -186,12 +208,12 @@ ipcMain.handle('engine-check', () => runAdm(['engine', 'check']));
 ipcMain.handle('open-external', (_e, url) => (/^https:\/\//.test(url) ? shell.openExternal(url) : Promise.reject(new Error('bad url'))));
 ipcMain.handle('open-path', (_e, p) => shell.openPath(p));
 
-// ---------- browser engine (first run: ~1.3 GB download into ~/Library/Caches/camoufox) ----------
+// ---------- browser engine (first run: ~1.3 GB download into the user cache dir) ----------
 let engineFetch = null;
 ipcMain.handle('engine-status', () => runAdm(['engine', 'status']));
 ipcMain.handle('engine-fetch', () => new Promise((resolve, reject) => {
   if (engineFetch) return resolve(false);
-  const proc = spawn(ADM, ['--json', 'engine', 'fetch']);
+  const proc = spawnAdm(['engine', 'fetch']);
   engineFetch = proc;
   let err = '', buf = '';
   proc.stdout.on('data', (d) => {

@@ -212,7 +212,7 @@ def main(argv=None):
     c.add_argument("--notes")
     c.set_defaults(fn=cmd_set)
 
-    c = sub.add_parser("engine", help="browser engine in ~/Library/Caches/camoufox")
+    c = sub.add_parser("engine", help="browser engine (Camoufox build) in the user cache dir")
     c.add_argument("action", choices=("status", "fetch", "patch", "check"))
     c.set_defaults(fn=cmd_engine)
 

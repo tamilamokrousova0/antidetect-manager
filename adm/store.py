@@ -6,7 +6,9 @@ import time
 import uuid
 from pathlib import Path
 
-DATA_DIR = Path(os.environ.get("ADM_DATA_DIR", Path.home() / "Library/Application Support/antidetect-manager"))
+from platformdirs import user_data_dir  # camoufox dependency; macOS: ~/Library/Application Support, Windows: %LOCALAPPDATA%
+
+DATA_DIR = Path(os.environ.get("ADM_DATA_DIR") or user_data_dir("antidetect-manager", appauthor=False, roaming=False))
 PROFILES_DIR = DATA_DIR / "profiles"
 
 SCHEMA = """

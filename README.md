@@ -18,6 +18,10 @@
 Приложение самодостаточно: внутри свой Python и все зависимости, папка проекта, Homebrew и uv не нужны.
 Данные профилей: `~/Library/Application Support/antidetect-manager/` (`ADM_DATA_DIR` переопределяет).
 
+### Windows (x64)
+
+Сборка есть: `Antidetect-Manager-Setup-<версия>-win-x64.exe` (установщик) и `-win-x64.zip` (распаковать и запустить) из того же Releases. Движок Camoufox скачивается при первом запуске в `%LOCALAPPDATA%\camoufox`, данные профилей — `%LOCALAPPDATA%\antidetect-manager`. Без сертификата SmartScreen покажет «неизвестный издатель»: «Подробнее → Выполнить в любом случае». Статус: собирается с Mac кросс-сборкой (python-build-standalone + колёса под Windows через uv), на реальной Windows ещё не прогонялось — см. «Что проверить на Windows» ниже.
+
 ### Из исходников (для разработки)
 
 ```sh
@@ -27,7 +31,9 @@ cd ~/Documents/Claude/antidetect-manager
 ```
 `setup.sh` ставит `uv` и `node` (если их нет), Python-окружение с Camoufox, сам браузер, собирает приложение в `/Applications` и добавляет его в Dock.
 
-Сборка дистрибутива: `cd ui && npm run bundle && npm run dist:dmg` → `ui/dist/*.dmg` и `*.zip` (бандл Python + пакеты собирает `ui/build/make-bundle.sh`, подпись ad-hoc в `ui/build/afterpack.js`).
+Сборка дистрибутива: `cd ui && npm run bundle && npm run dist:dmg` → `ui/dist/*.dmg` и `*.zip`; Windows с Mac: `npm run bundle:win && npm run dist:win` → `Setup-*.exe` и `*-win-x64.zip` (нужны `brew install makensis wine`: makensis electron-builder'а только x86_64, `build/dist-win.js` подставляет нативный из Homebrew через `ELECTRON_BUILDER_NSIS_DIR`). Бандл Python + пакеты собирает `ui/build/make-bundle.js` (python-build-standalone + `uv pip install --python-platform`), подпись ad-hoc на macOS в `ui/build/afterpack.js`.
+
+**Что проверить на Windows** (кросс-сборка не запускалась вживую): первый запуск и скачивание движка; запуск профиля и кнопка «Закрыть» (остановка идёт через stdin-команду `stop`, SIGTERM на Windows нет); закрытие последнего окна; список шрифтов хоста (PowerShell `InstalledFontCollection`); патч `distribution/policies.json` в папке движка; сохранение паролей; заголовок окна с именем профиля.
 
 ## Использование
 
@@ -73,7 +79,7 @@ scripts/install-engine-watch.sh
 | `adm/cookies.py` | импорт/экспорт cookies в фоновой сессии без сети |
 | `adm/pdl.py` | многопоточная загрузка больших файлов с GitHub |
 | `adm/cli.py` | CLI |
-| `ui/` | Electron 45: `main.js` вызывает `adm --json` (в .app — `Contents/Resources/adm/run` со встроенным Python, в dev — `adm.sh`), каждый открытый профиль — отдельный процесс; экран первого запуска качает движок (`adm engine status/fetch`) |
+| `ui/` | Electron 45: `main.js` запускает встроенный Python (`<resources>/adm/python`, в dev — `.venv`) с `-m adm.cli --json`, каждый открытый профиль — отдельный процесс, остановка — строка `stop` в stdin (+ SIGTERM вне Windows); экран первого запуска качает движок (`adm engine status/fetch`) |
 | `scripts/` | обновление движка, загрузка браузера, сторож обновлений, `live_check.py` |
 | `tests/` | `test_forwarder.py`, `test_cookies.py` (без браузера), `e2e_launch.py`, `socks_server.py` (тестовый SOCKS5 с логином) |
 

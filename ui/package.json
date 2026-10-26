@@ -5,9 +5,11 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "bundle": "build/make-bundle.sh",
+    "bundle": "node build/make-bundle.js --platform mac",
+    "bundle:win": "node build/make-bundle.js --platform win",
     "dist": "electron-builder --mac dir --arm64",
-    "dist:dmg": "electron-builder --mac dmg zip --arm64"
+    "dist:dmg": "electron-builder --mac dmg zip --arm64",
+    "dist:win": "node build/dist-win.js"
   },
   "devDependencies": {
     "electron": "45.0.0",
@@ -43,14 +45,14 @@
       "identity": null,
       "extendInfo": {
         "NSAppleEventsUsageDescription": "Чтение списка шрифтов системы для профилей macOS."
-      }
+      },
+      "extraResources": [
+        {
+          "from": "bundle-mac",
+          "to": "adm"
+        }
+      ]
     },
-    "extraResources": [
-      {
-        "from": "bundle",
-        "to": "adm"
-      }
-    ],
     "afterPack": "build/afterpack.js",
     "artifactName": "Antidetect-Manager-${version}-${arch}.${ext}",
     "dmg": {
@@ -71,6 +73,37 @@
         "width": 560,
         "height": 380
       }
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "extraResources": [
+        {
+          "from": "bundle-win",
+          "to": "adm"
+        }
+      ],
+      "artifactName": "Antidetect-Manager-${version}-win-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Antidetect-Manager-Setup-${version}-win-${arch}.${ext}",
+      "shortcutName": "Antidetect Manager"
     }
   }
 }

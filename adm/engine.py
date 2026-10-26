@@ -1,5 +1,6 @@
 """Browser engine = Camoufox build + GeoIP database + default addons, all in
-~/Library/Caches/camoufox (shared by the packaged app and the dev checkout).
+the user cache dir (~/Library/Caches/camoufox on macOS, %LOCALAPPDATA%\\camoufox on
+Windows), shared by the packaged app and the dev checkout.
 The packaged .app carries only the Python side; the engine (~1.3 GB) is
 fetched here on first run."""
 import importlib.metadata as md
@@ -121,9 +122,10 @@ def policies_path() -> Path | None:
         app = camoufox_path(download_if_missing=False)
     except Exception:
         return None
-    # camoufox_path() is the versioned install dir holding Camoufox.app
-    for cand in (app / "Camoufox.app", app, app.parent):
-        p = cand / "Contents/Resources/distribution/policies.json"
+    # camoufox_path() is the versioned install dir: Camoufox.app on macOS,
+    # camoufox.exe + distribution/ at the top level on Windows and Linux.
+    for p in (app / "Camoufox.app/Contents/Resources/distribution/policies.json",
+              app / "distribution/policies.json"):
         if p.exists():
             return p
     return None

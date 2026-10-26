@@ -15,7 +15,23 @@ def _resolve(url: str) -> str:
     return urllib.request.urlopen(urllib.request.Request(url, method="HEAD"), timeout=30).geturl()
 
 
+def _download_plain(url: str, dest_fileobj, progress=None) -> int:
+    """No curl on this machine (rare: Windows 10 1803+ and macOS ship it):
+    one connection, still with progress."""
+    with urllib.request.urlopen(_resolve(url), timeout=60) as r:
+        size = int(r.headers.get("Content-Length") or 0)
+        done = 0
+        while chunk := r.read(1 << 20):
+            dest_fileobj.write(chunk)
+            done += len(chunk)
+            if progress:
+                progress(done, size or done)
+    return done
+
+
 def download(url: str, dest_fileobj, parts: int = 16, progress=None) -> int:
+    if not shutil.which("curl"):
+        return _download_plain(url, dest_fileobj, progress)
     final = _resolve(url)
     size = int(urllib.request.urlopen(urllib.request.Request(final, method="HEAD"), timeout=30)
                .headers["Content-Length"])

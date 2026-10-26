@@ -9,6 +9,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 import warnings
 
@@ -147,37 +148,76 @@ def main_locale(country: str) -> str:
     return normalize_locale(f"{best.get('type').replace('_', '-')}-{country}").as_string
 
 
-# Font families this Mac really has = what stock Firefox here enumerates.
-# For a native (macOS-on-macOS) identity Camoufox claims only the OS base, so
-# real fonts outside that base (Herculanum, SignPainter, ...) are hidden and the
-# profile measures differently from stock Firefox on the same machine. Pixelscan's
-# mac font check failed on exactly that (plus Rockwell/Kefa, see README).
+# Font families the host really has = what stock Firefox here enumerates.
+# For a native identity (macOS profile on a Mac, Windows profile on Windows)
+# Camoufox claims only the OS base, so real fonts outside that base are hidden
+# and the profile measures differently from stock Firefox on the same machine.
+# Pixelscan's mac font check failed on exactly that (plus Rockwell, see README).
 _HOST_FONTS_JXA = ('ObjC.import("AppKit"); '
                    'JSON.stringify(ObjC.deepUnwrap($.NSFontManager.sharedFontManager.availableFontFamilies))')
+_HOST_FONTS_PS = ('Add-Type -AssemblyName System.Drawing; '
+                  '(New-Object System.Drawing.Text.InstalledFontCollection).Families | ForEach-Object { $_.Name }')
+_HOST_OS_KEY = {"darwin": "mac", "win32": "win"}  # sys.platform -> Camoufox fonts.json key
+_PROFILE_OS_KEY = {"macos": "mac", "windows": "win", "linux": "lin"}
 
 
 def host_font_families() -> list[str]:
-    if sys.platform != "darwin":
-        return []
     try:
-        out = subprocess.run(["osascript", "-l", "JavaScript", "-e", _HOST_FONTS_JXA],
-                             capture_output=True, text=True, timeout=15).stdout
-        return [f for f in json.loads(out) if isinstance(f, str)]
+        if sys.platform == "darwin":
+            out = subprocess.run(["osascript", "-l", "JavaScript", "-e", _HOST_FONTS_JXA],
+                                 capture_output=True, text=True, timeout=15).stdout
+            return [f for f in json.loads(out) if isinstance(f, str)]
+        if sys.platform == "win32":
+            out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", _HOST_FONTS_PS],
+                                 capture_output=True, text=True, timeout=30,
+                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+            return [l.strip() for l in out.splitlines() if l.strip()]
     except Exception:
+        pass
+    return []
+
+
+def native_host_fonts(profile_os: str) -> list[str]:
+    """Allow-list for Camoufox when the profile's OS is the host's OS: every
+    family the host has, plus Camoufox's catalogue for that OS (fonts resolved
+    by name that the family list omits). The list only unhides real fonts; a
+    name that is not installed renders nothing. [] = leave Camoufox alone."""
+    key = _HOST_OS_KEY.get(sys.platform)
+    if not key or _PROFILE_OS_KEY.get(profile_os) != key:
         return []
-
-
-def native_mac_fonts() -> list[str]:
-    """Allow-list for Camoufox: every family the host has, plus Camoufox's own
-    macOS catalogue (fonts resolved by name that the family list omits). The
-    list only unhides real fonts; a name that is not installed renders nothing."""
     fams = host_font_families()
     if not fams:
         return []
     import camoufox
-    with open(os.path.join(os.path.dirname(camoufox.__file__), "fonts.json")) as f:
-        catalog = json.load(f).get("mac", [])
+    with open(os.path.join(os.path.dirname(camoufox.__file__), "fonts.json"), encoding="utf-8") as f:
+        catalog = json.load(f).get(key, [])
     return sorted(set(fams) | set(catalog))
+
+
+def _stop_requests(closed: asyncio.Event) -> None:
+    """How the UI closes a profile. SIGTERM where the event loop supports it
+    (not on Windows); and, when launched by the UI (ADM_UI=1, stdin is a
+    pipe), the line "stop" on stdin or stdin closing (the UI died) -- which
+    works everywhere and leaves no orphaned browser behind."""
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, closed.set)
+        except (NotImplementedError, RuntimeError, ValueError):
+            pass
+    if os.environ.get("ADM_UI") != "1" or sys.stdin is None or sys.stdin.closed:
+        return
+
+    def reader():
+        try:
+            for line in sys.stdin:
+                if line.strip().lower() == "stop":
+                    break
+        except Exception:
+            pass
+        loop.call_soon_threadsafe(closed.set)
+
+    threading.Thread(target=reader, daemon=True, name="adm-stdin").start()
 
 
 async def _drop_extra_blank_tabs(ctx):
@@ -295,10 +335,9 @@ async def launch(ref: str, url: str | None = None, headless: bool = False, on_re
     # "remember me") across restarts instead of dropping them on close.
     opts["firefox_user_prefs"] = dict(SESSION_PREFS)
     opts["firefox_user_prefs"].update(new_tab_button_pref(p["id"]))
-    if p["os"] == "macos" and sys.platform == "darwin":
-        fonts = native_mac_fonts()
-        if fonts:
-            opts["fonts"] = fonts
+    fonts = native_host_fonts(p["os"])
+    if fonts:
+        opts["fonts"] = fonts
     if proxy_opt:
         opts |= dict(proxy=proxy_opt, geoip=geoip, locale=locale)
         # Without this Firefox resolves DNS locally for SOCKS (DNS leak).
@@ -313,11 +352,9 @@ async def launch(ref: str, url: str | None = None, headless: bool = False, on_re
             # Subscribe before anything can close the context, or wait() hangs forever.
             closed = asyncio.Event()
             ctx.on("close", lambda *_: closed.set())
-            # UI "Stop" sends SIGTERM: close the browser cleanly so cookies are
-            # flushed and no orphaned Firefox is left behind.
-            loop = asyncio.get_running_loop()
-            for sig in (signal.SIGTERM, signal.SIGINT):
-                loop.add_signal_handler(sig, closed.set)
+            # UI "Stop": close the browser cleanly so cookies are flushed and no
+            # orphaned Firefox is left behind.
+            _stop_requests(closed)
             await _drop_extra_blank_tabs(ctx)
             last_tabs = store.profile_dir(p["id"]) / "last_tabs.json"
             await _reopen_last_tabs(ctx, last_tabs)
