@@ -1,0 +1,48 @@
+{
+  "name": "antidetect-manager-ui",
+  "version": "0.1.0",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "node build/write-adm-home.js && electron-builder --mac dir --arm64"
+  },
+  "devDependencies": {
+    "electron": "45.0.0",
+    "electron-builder": "^26.18.0"
+  },
+  "productName": "Antidetect Manager",
+  "description": "Профили Camoufox: отпечатки, прокси, cookies",
+  "build": {
+    "appId": "local.antidetect-manager",
+    "productName": "Antidetect Manager",
+    "electronVersion": "45.0.0",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "renderer.js",
+      "style.css",
+      "adm-home.json"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.productivity",
+      "identity": null,
+      "extendInfo": {
+        "NSDocumentsFolderUsageDescription": "Приложение запускает менеджер профилей из папки проекта в Документах."
+      }
+    }
+  }
+}

@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+ui/node_modules/
+ui/dist/
+ui/adm-home.json
+.DS_Store

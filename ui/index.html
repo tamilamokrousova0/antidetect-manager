@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'">
+  <title>Профили</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="toolbar">
+    <h1>Профили <span id="count" class="muted"></span></h1>
+    <input id="search" type="search" placeholder="Поиск: имя, тег, IP, страна" spellcheck="false">
+    <select id="tagFilter"><option value="">Все теги</option></select>
+    <button id="checkAll">Проверить прокси</button>
+    <button id="newBtn" class="primary">Новый профиль</button>
+  </header>
+
+  <main>
+    <div class="table-wrap">
+      <table id="table">
+        <thead>
+          <tr>
+            <th class="c-check"><input type="checkbox" id="selAll"></th>
+            <th class="c-name">Имя</th>
+            <th class="c-tags">Теги</th>
+            <th class="c-proxy">Прокси</th>
+            <th class="c-exit">Выход</th>
+            <th class="c-used">Запускался</th>
+            <th class="c-act"></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div id="empty" class="empty" hidden>
+        <p>Профилей пока нет.</p>
+        <button id="emptyNew" class="primary">Создать первый</button>
+      </div>
+    </div>
+
+    <aside id="drawer" hidden>
+      <form id="form" autocomplete="off">
+        <div class="drawer-head">
+          <h2 id="drawerTitle"></h2>
+          <button type="button" id="closeDrawer" class="ghost" title="Закрыть (Esc)">Закрыть</button>
+        </div>
+
+        <label>Имя <input name="name" required spellcheck="false"></label>
+
+        <div class="row2" data-mode="create">
+          <label>Количество <input name="count" type="number" min="1" max="200" value="1"></label>
+          <label>ОС отпечатка
+            <select name="os">
+              <option value="macos">macOS</option>
+              <option value="windows">Windows</option>
+              <option value="linux">Linux</option>
+            </select>
+          </label>
+        </div>
+        <p class="hint" data-mode="create">При количестве больше 1 к имени добавится номер: acc-001, acc-002… На этом Mac лучше macOS: шрифты будут настоящие системные.</p>
+
+        <label>Прокси
+          <input name="proxy" spellcheck="false" placeholder="host:port:user:pass или socks5://user:pass@host:port">
+        </label>
+        <div class="proxy-actions">
+          <button type="button" id="testProxy">Проверить</button>
+          <button type="button" id="removeProxy" data-mode="edit">Убрать прокси</button>
+          <span id="proxyResult" class="muted"></span>
+        </div>
+
+        <label>Теги <input name="tags" spellcheck="false" placeholder="через запятую"></label>
+        <label data-mode="edit">Язык браузера <input name="locale" spellcheck="false"></label>
+        <label>Заметки <textarea name="notes" rows="3"></textarea></label>
+
+        <fieldset class="cookies" data-mode="edit">
+          <legend>Cookies</legend>
+          <div class="btns">
+            <button type="button" id="ckFile">Импорт из файла…</button>
+            <button type="button" id="ckPaste">Вставить из буфера</button>
+          </div>
+          <label class="inline"><input type="checkbox" id="ckReplace"> удалить текущие cookies перед импортом</label>
+          <div class="btns">
+            <button type="button" id="ckExport">Экспорт в файл…</button>
+            <button type="button" id="ckCopy">Скопировать JSON</button>
+          </div>
+          <div id="ckResult" class="muted"></div>
+        </fieldset>
+
+        <dl id="info" data-mode="edit"></dl>
+
+        <div class="drawer-foot">
+          <button type="submit" class="primary" id="submitBtn"></button>
+          <button type="button" id="deleteOne" class="danger" data-mode="edit">Удалить</button>
+        </div>
+      </form>
+    </aside>
+  </main>
+
+  <footer>
+    <div id="selection" hidden>
+      <span id="selCount"></span>
+      <button id="selCheck">Проверить прокси</button>
+      <button id="selDelete" class="danger">Удалить</button>
+    </div>
+    <div id="status" class="muted"></div>
+  </footer>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
