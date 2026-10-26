@@ -13,6 +13,7 @@
     <select id="tagFilter"><option value="">Все теги</option></select>
     <button id="checkAll">Проверить прокси</button>
     <button id="newBtn" class="primary">Новый профиль</button>
+    <button id="settingsBtn" class="ghost" title="Настройки">Настройки</button>
   </header>
 
   <main>
@@ -85,7 +86,7 @@
           <div id="ckResult" class="muted"></div>
         </fieldset>
 
-        <p class="hint" data-mode="edit">Имя профиля показывается в заголовке окна браузера. Пароли: браузер предложит сохранить логин при первом входе и подставит его в следующий раз (список — <span class="mono">about:logins</span>). Закрытие последнего окна = закрытие профиля; вкладки и cookies восстанавливаются при следующем запуске.</p>
+        <p class="hint" data-mode="edit">Имя профиля показывается в заголовке окна браузера. Пароли: браузер предложит сохранить логин при первом входе и подставит его в следующий раз (список — <span class="mono">about:logins</span>). Закрытие последнего окна = закрытие профиля; вкладки и cookies восстанавливаются при следующем запуске. Кнопка «+» новой вкладки — справа от адресной строки (⌘T).</p>
 
         <dl id="info" data-mode="edit"></dl>
 
@@ -110,6 +111,33 @@
         <button id="engineFetch" class="primary">Скачать</button>
         <button id="engineLater" class="ghost">Позже</button>
       </div>
+    </div>
+  </div>
+
+  <div id="settings" class="engine" hidden>
+    <div class="engine-card settings-card">
+      <div class="drawer-head"><h2>Настройки</h2><button type="button" id="settingsClose" class="ghost">Закрыть</button></div>
+
+      <section>
+        <h3>Приложение</h3>
+        <div class="kv"><span>Версия</span><span id="stAppVersion" class="mono"></span></div>
+        <div class="btns"><button id="stAppCheck">Проверить обновления</button><button id="stAppOpen" hidden>Скачать</button><button id="stRepo" class="ghost">GitHub</button></div>
+        <div id="stAppResult" class="muted"></div>
+      </section>
+
+      <section>
+        <h3>Движок Camoufox</h3>
+        <div class="kv"><span>Пакет camoufox</span><span id="stPkg" class="mono"></span></div>
+        <div class="kv"><span>Браузер</span><span id="stBrowser" class="mono"></span></div>
+        <div class="btns"><button id="stEngineCheck">Проверить обновления</button><button id="stEngineFetch" hidden class="primary">Скачать парную сборку</button><button id="stCache" class="ghost">Папка движка</button></div>
+        <div id="stEngineResult" class="muted"></div>
+      </section>
+
+      <section>
+        <h3>Данные</h3>
+        <div class="kv"><span>Профили</span><span id="stData" class="mono"></span></div>
+        <div class="btns"><button id="stDataOpen">Открыть папку</button></div>
+      </section>
     </div>
   </div>
 

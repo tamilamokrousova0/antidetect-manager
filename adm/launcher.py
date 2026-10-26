@@ -45,6 +45,66 @@ SESSION_PREFS = {
 }
 
 
+# Camoufox's toolbar default puts the new-tab "+" and the all-tabs menu at the
+# far right of the navigation bar, where nobody looks for them ("there is no +
+# for a new tab"). The tab strip itself cannot take them: this build bounces
+# any widget placed in TabsToolbar (or the bookmarks bar) straight back into
+# the nav-bar, so the best visible spot is right after the address bar.
+_DEFAULT_UI_STATE = {
+    "placements": {
+        "widget-overflow-fixed-list": [], "unified-extensions-area": [],
+        "nav-bar": ["back-button", "forward-button", "stop-reload-button", "customizableui-special-spring1",
+                    "vertical-spacer", "urlbar-container", "customizableui-special-spring2", "downloads-button",
+                    "fxa-toolbar-menu-button", "reset-pbm-toolbar-button", "unified-extensions-button",
+                    "new-tab-button", "customizableui-special-spring3", "alltabs-button", "personal-bookmarks"],
+        "TabsToolbar": ["tabbrowser-tabs"], "vertical-tabs": [], "PersonalToolbar": [],
+    },
+    "seen": ["reset-pbm-toolbar-button", "developer-button"],
+    "dirtyAreaCache": ["nav-bar", "TabsToolbar", "vertical-tabs", "PersonalToolbar"],
+    "currentVersion": 26, "newElementCount": 3,
+}
+
+
+def _tabs_with_new_tab_button(state: dict) -> dict:
+    """new-tab-button (+) and alltabs-button right after the address bar."""
+    pl = state.setdefault("placements", {})
+    nav = [w for w in pl.get("nav-bar", []) if w not in ("new-tab-button", "alltabs-button")]
+    i = nav.index("urlbar-container") + 1 if "urlbar-container" in nav else len(nav)
+    pl["nav-bar"] = nav[:i] + ["new-tab-button", "alltabs-button"] + nav[i:]
+    for area in list(pl):
+        if area != "nav-bar":
+            pl[area] = [w for w in pl[area] if w not in ("new-tab-button", "alltabs-button")]
+    return state
+
+
+def new_tab_button_pref(pid: str) -> dict:
+    """Once per profile: move the buttons in the saved toolbar state (prefs.js,
+    profile closed). A profile without a saved state gets the corrected default
+    as a launch pref until Firefox saves one. A marker keeps later user
+    customisation (toolbar "Customize") untouched."""
+    import re
+    d = store.profile_dir(pid)
+    marker = d / ".newtab-fixed"
+    prefs = d / "prefs.js"
+    key = "browser.uiCustomization.state"
+    if prefs.exists():
+        text = prefs.read_text()
+        m = re.search(r'user_pref\("%s", (".*?")\);' % re.escape(key), text)
+        if m:
+            if not marker.exists():
+                try:
+                    state = _tabs_with_new_tab_button(json.loads(json.loads(m.group(1))))
+                    text = text[:m.start(1)] + json.dumps(json.dumps(state)) + text[m.end(1):]
+                    prefs.write_text(text)
+                except (ValueError, KeyError):
+                    pass
+                marker.touch()
+            return {}
+    if marker.exists():
+        return {}
+    return {key: json.dumps(_tabs_with_new_tab_button(json.loads(json.dumps(_DEFAULT_UI_STATE))))}
+
+
 def write_badge_addon(p: dict) -> str:
     """Tiny per-profile WebExtension that prefixes every window title with the
     profile name ("FB Anna — Facebook — Camoufox"), so open profiles are told
@@ -234,6 +294,7 @@ async def launch(ref: str, url: str | None = None, headless: bool = False, on_re
     # windows and tabs"; this also keeps session cookies (logins without
     # "remember me") across restarts instead of dropping them on close.
     opts["firefox_user_prefs"] = dict(SESSION_PREFS)
+    opts["firefox_user_prefs"].update(new_tab_button_pref(p["id"]))
     if p["os"] == "macos" and sys.platform == "darwin":
         fonts = native_mac_fonts()
         if fonts:

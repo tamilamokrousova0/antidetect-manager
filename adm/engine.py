@@ -22,8 +22,41 @@ def status() -> dict:
         geoip = get_mmdb_path().exists()
     except Exception:
         pass
+    from . import store
     return {"installed": browser is not None, "browser": browser, "geoip": geoip,
-            "package": md.version("camoufox"), "cache_dir": str(INSTALL_DIR)}
+            "package": md.version("camoufox"), "cache_dir": str(INSTALL_DIR),
+            "data_dir": str(store.DATA_DIR)}
+
+
+def check() -> dict:
+    """Update check: the camoufox package on PyPI (newer package = new app
+    release, the package is frozen inside the .app) and whether the installed
+    browser build is the one this package pairs with (after an app update the
+    paired build may still need fetching)."""
+    import urllib.request
+    st = status()
+    try:
+        from camoufox.browser_pin import effective_pin
+        from camoufox.multiversion import load_config
+        pin = effective_pin(load_config())
+        st["pin"] = pin.spec if pin else None
+    except Exception:
+        st["pin"] = None
+    st["browser_paired"] = bool(st["browser"]) and (st["pin"] is None or st["browser"] == st["pin"])
+    try:
+        data = json.load(urllib.request.urlopen("https://pypi.org/pypi/camoufox/json", timeout=20))
+        st["pypi_latest"] = data["info"]["version"]  # latest non-prerelease
+        st["package_outdated"] = _vtuple(st["pypi_latest"]) > _vtuple(st["package"])
+    except Exception as e:
+        st["pypi_latest"] = None
+        st["package_outdated"] = None
+        st["error"] = f"PyPI недоступен: {type(e).__name__}"
+    return st
+
+
+def _vtuple(v: str) -> tuple:
+    import re
+    return tuple(int(x) for x in re.findall(r"\d+", v)[:4])
 
 
 def fetch(progress=None) -> None:

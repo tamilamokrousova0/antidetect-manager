@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard, shell } = require('electron');
 const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
@@ -164,6 +164,28 @@ ipcMain.handle('launch', (_e, id) => launchProfile(id));
 ipcMain.handle('stop', (_e, id) => stopProfile(id));
 ipcMain.handle('running', () => Object.fromEntries([...running].map(([id, e]) => [id, e.state])));
 
+// ---------- settings: versions and update checks ----------
+const REPO = 'tamilamokrousova0/antidetect-manager';
+const vtuple = (v) => String(v || '').match(/\d+/g)?.map(Number) || [];
+const newer = (a, b) => { // a > b ?
+  const x = vtuple(a), y = vtuple(b);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d > 0; }
+  return false;
+};
+ipcMain.handle('app-info', () => ({ version: app.getVersion(), packaged: app.isPackaged, repo: `https://github.com/${REPO}` }));
+ipcMain.handle('app-check-update', async () => {
+  const r = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'antidetect-manager' } });
+  if (r.status === 404) return { latest: null, url: `https://github.com/${REPO}/releases`, newer: false };
+  if (!r.ok) throw new Error(`GitHub: HTTP ${r.status}`);
+  const rel = await r.json();
+  const latest = String(rel.tag_name || '').replace(/^v/, '');
+  const dmg = (rel.assets || []).find((a) => /\.dmg$/.test(a.name));
+  return { latest, url: dmg ? dmg.browser_download_url : rel.html_url, page: rel.html_url, newer: newer(latest, app.getVersion()), published: rel.published_at };
+});
+ipcMain.handle('engine-check', () => runAdm(['engine', 'check']));
+ipcMain.handle('open-external', (_e, url) => (/^https:\/\//.test(url) ? shell.openExternal(url) : Promise.reject(new Error('bad url'))));
+ipcMain.handle('open-path', (_e, p) => shell.openPath(p));
+
 // ---------- browser engine (first run: ~1.3 GB download into ~/Library/Caches/camoufox) ----------
 let engineFetch = null;
 ipcMain.handle('engine-status', () => runAdm(['engine', 'status']));
@@ -207,7 +229,7 @@ function createWindow() {
       sandbox: true,
     },
   });
-  win.loadFile(path.join(__dirname, 'index.html'));
+  win.loadFile(path.join(__dirname, 'index.html'), { hash: process.env.ADM_UI_HASH || '' }); // dev aid: ADM_UI_HASH=settings
 
   // Dev aid: ADM_UI_SHOT=/tmp/x.png -> screenshot of the window every 3s
   // (screencapture needs Screen Recording permission; capturePage does not).

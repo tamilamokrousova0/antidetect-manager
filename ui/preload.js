@@ -18,4 +18,9 @@ contextBridge.exposeInMainWorld('adm', {
   engineStatus: () => ipcRenderer.invoke('engine-status'),
   engineFetch: () => ipcRenderer.invoke('engine-fetch'),
   onEngineProgress: (cb) => ipcRenderer.on('engine-progress', (_e, s) => cb(s)),
+  appInfo: () => ipcRenderer.invoke('app-info'),
+  appCheckUpdate: () => ipcRenderer.invoke('app-check-update'),
+  engineCheck: () => ipcRenderer.invoke('engine-check'),
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
+  openPath: (p) => ipcRenderer.invoke('open-path', p),
 });

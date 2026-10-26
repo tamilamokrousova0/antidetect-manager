@@ -184,3 +184,12 @@ label.inline { flex-direction: row; align-items: center; gap: 6px; }
 .engine-progress .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
 .engine-progress .bar div { height: 100%; width: 0; background: var(--accent); transition: width .4s; }
 .engine-progress .muted { margin-top: 6px; font-size: 12px; }
+
+/* settings */
+.settings-card { width: 520px; }
+.settings-card section { padding: 10px 0; border-top: 1px solid var(--line); }
+.settings-card h3 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.settings-card .kv { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
+.settings-card .kv span:last-child { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-card .btns { display: flex; gap: 8px; margin: 8px 0 4px; justify-content: flex-start; }
+.settings-card .muted { min-height: 18px; }

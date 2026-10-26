@@ -333,6 +333,7 @@ $('#tagFilter').onchange = render;
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !$('#drawer').hidden) closeDrawer();
+  if (e.key === 'Escape' && !$('#settings').hidden) { $('#settings').hidden = true; return; }
   if (e.key === 'n' && e.metaKey) { e.preventDefault(); openCreate(); }
   if (e.key === 'f' && e.metaKey) { e.preventDefault(); $('#search').focus(); }
 });
@@ -390,8 +391,55 @@ window.adm.onEngineProgress((ev) => {
   }
 });
 
+// ---------- settings ----------
+let appUpdateUrl = null, dataDir = null, cacheDir = null;
+async function openSettings() {
+  $('#settings').hidden = false;
+  $('#stAppResult').textContent = ''; $('#stEngineResult').textContent = '';
+  $('#stAppOpen').hidden = true; $('#stEngineFetch').hidden = true;
+  try {
+    const info = await window.adm.appInfo();
+    $('#stAppVersion').textContent = info.version + (info.packaged ? '' : ' (dev)');
+    const st = await window.adm.engineStatus();
+    $('#stPkg').textContent = st.package;
+    $('#stBrowser').textContent = st.browser || 'не установлен';
+    $('#stData').textContent = st.data_dir; dataDir = st.data_dir; cacheDir = st.cache_dir;
+  } catch (e) { status(errText(e), true); }
+}
+$('#settingsBtn').onclick = openSettings;
+$('#settingsClose').onclick = () => { $('#settings').hidden = true; };
+$('#stRepo').onclick = async () => window.adm.openExternal((await window.adm.appInfo()).repo);
+$('#stDataOpen').onclick = () => dataDir && window.adm.openPath(dataDir);
+$('#stCache').onclick = () => cacheDir && window.adm.openPath(cacheDir);
+$('#stAppOpen').onclick = () => appUpdateUrl && window.adm.openExternal(appUpdateUrl);
+$('#stAppCheck').onclick = async () => {
+  const out = $('#stAppResult'); out.textContent = 'Проверяю GitHub…'; $('#stAppOpen').hidden = true;
+  try {
+    const r = await window.adm.appCheckUpdate();
+    if (!r.latest) { out.textContent = 'Релизов на GitHub пока нет'; return; }
+    if (r.newer) { out.textContent = `Доступна версия ${r.latest}. Скачайте dmg, перетащите в «Программы» поверх старой, профили сохранятся.`; appUpdateUrl = r.url; $('#stAppOpen').hidden = false; }
+    else out.textContent = `Установлена последняя версия (${r.latest} на GitHub)`;
+  } catch (e) { out.textContent = 'Не удалось проверить: ' + errText(e); }
+};
+$('#stEngineCheck').onclick = async () => {
+  const out = $('#stEngineResult'); out.textContent = 'Проверяю PyPI и установленную сборку…'; $('#stEngineFetch').hidden = true;
+  try {
+    const r = await window.adm.engineCheck();
+    const parts = [];
+    if (r.package_outdated) parts.push(`На PyPI camoufox ${r.pypi_latest}, в приложении ${r.package}: новый движок придёт с обновлением приложения.`);
+    else if (r.pypi_latest) parts.push(`Пакет camoufox актуален (${r.package}).`);
+    else parts.push(r.error || 'PyPI недоступен.');
+    if (!r.browser) { parts.push('Браузер не установлен.'); $('#stEngineFetch').hidden = false; }
+    else if (!r.browser_paired) { parts.push(`Установлен браузер ${r.browser}, а этой версии нужен ${r.pin}.`); $('#stEngineFetch').hidden = false; }
+    else parts.push(`Браузер ${r.browser} — парная сборка для этого пакета.`);
+    out.textContent = parts.join(' ');
+  } catch (e) { out.textContent = 'Не удалось проверить: ' + errText(e); }
+};
+$('#stEngineFetch').onclick = () => { $('#settings').hidden = true; $('#engine').hidden = false; $('#engineFetch').click(); };
+
 (async () => {
   states = await window.adm.running();
   await busy('Загрузка…', refresh).catch(() => {});
   await engineGate();
+  if (location.hash === '#settings') { await openSettings(); $('#stAppCheck').click(); $('#stEngineCheck').click(); }
 })();
