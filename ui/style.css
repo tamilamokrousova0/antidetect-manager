@@ -193,3 +193,11 @@ label.inline { flex-direction: row; align-items: center; gap: 6px; }
 .settings-card .kv span:last-child { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-card .btns { display: flex; gap: 8px; margin: 8px 0 4px; justify-content: flex-start; }
 .settings-card .muted { min-height: 18px; }
+
+/* profile status + self-check + proxy state dots */
+.st { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+.st-warmup { background: #3b8cf0; } .st-active { background: var(--ok); } .st-checkpoint { background: var(--warn); } .st-banned { background: var(--bad); }
+.sc { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+.sc-ok { background: var(--ok); } .sc-warn { background: var(--warn); } .sc-bad { background: var(--bad); }
+button.proxy-down { color: var(--bad); border-color: var(--bad); }
+.passport dd { word-break: break-all; }

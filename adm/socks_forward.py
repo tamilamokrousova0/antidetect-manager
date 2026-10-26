@@ -1,9 +1,12 @@
-"""Local SOCKS5 forwarder: 127.0.0.1:<port> (no auth) -> upstream SOCKS5 (user/pass).
+"""Local SOCKS5 forwarder: 127.0.0.1:<port> (no auth) -> upstream SOCKS5 or
+HTTP CONNECT proxy (user/pass).
 
-Firefox/Playwright can't authenticate to SOCKS5, so every profile with an
-authenticated socks5 proxy gets its own local listener bound to loopback.
-Hostnames are passed through to the upstream unresolved (ATYP=domain),
-so DNS happens on the proxy side.
+Every profile with a proxy gets its own local listener bound to loopback: the
+browser only ever talks SOCKS5 without auth to 127.0.0.1, the forwarder does
+the upstream protocol and credentials. Hostnames are passed through to the
+upstream unresolved (ATYP=domain / CONNECT host:port), so DNS happens on the
+proxy side. Because every connection passes here, the forwarder also knows
+when the proxy stops answering (on_state callback: "down" / "up").
 """
 import asyncio
 import ipaddress
@@ -18,6 +21,16 @@ class Upstream:
     port: int
     username: str | None = None
     password: str | None = None
+    scheme: str = "socks5"  # socks5 | http
+
+
+def decode_target(atyp: int, addr: bytes) -> tuple[str, int]:
+    port = struct.unpack(">H", addr[-2:])[0]
+    if atyp == 1:
+        return str(ipaddress.IPv4Address(addr[:4])), port
+    if atyp == 4:
+        return str(ipaddress.IPv6Address(addr[:16])), port
+    return addr[1:-2].decode("idna"), port
 
 
 class SocksError(Exception):
@@ -36,8 +49,36 @@ async def _read_addr(reader: asyncio.StreamReader, atyp: int) -> bytes:
     raise SocksError(f"bad atyp {atyp}")
 
 
+async def _http_connect(up: Upstream, atyp: int, addr: bytes):
+    """CONNECT through an HTTP proxy (Basic auth). Same error vocabulary as SOCKS."""
+    import base64
+    host, port = decode_target(atyp, addr)
+    r, w = await asyncio.wait_for(asyncio.open_connection(up.host, up.port), 20)
+    try:
+        auth = ""
+        if up.username:
+            tok = base64.b64encode(f"{up.username}:{up.password or ''}".encode()).decode()
+            auth = f"Proxy-Authorization: Basic {tok}\r\n"
+        target = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+        w.write(f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n{auth}\r\n".encode())
+        await w.drain()
+        head = await asyncio.wait_for(r.readuntil(b"\r\n\r\n"), 20)
+        status = head.split(b"\r\n", 1)[0].split(b" ")
+        code = int(status[1]) if len(status) > 1 and status[1].isdigit() else 0
+        if code == 407:
+            raise SocksError("upstream auth failed")
+        if code != 200:
+            raise SocksError(f"upstream connect failed, rep={code}")
+        return r, w, b"\x05\x00\x00\x01" + b"\x00" * 6
+    except BaseException:
+        w.close()
+        raise
+
+
 async def upstream_connect(up: Upstream, atyp: int, addr: bytes):
     """Open a tunnel through the upstream proxy. Returns (reader, writer, reply)."""
+    if up.scheme == "http":
+        return await _http_connect(up, atyp, addr)
     r, w = await asyncio.wait_for(asyncio.open_connection(up.host, up.port), 20)
     try:
         methods = b"\x02" if up.username else b"\x00"
@@ -81,10 +122,30 @@ async def _pipe(src: asyncio.StreamReader, dst: asyncio.StreamWriter):
 
 
 class Forwarder:
-    def __init__(self, upstream: Upstream, port: int = 0):
+    # consecutive upstream failures before the proxy is reported "down"
+    DOWN_AFTER = 2
+
+    def __init__(self, upstream: Upstream, port: int = 0, on_state=None):
         self.upstream = upstream
         self.port = port
+        self.on_state = on_state  # callable(state: "down" | "up")
+        self.failures = 0
+        self.down = False
         self._server: asyncio.base_events.Server | None = None
+
+    def _note(self, ok: bool):
+        if ok:
+            self.failures = 0
+            if self.down:
+                self.down = False
+                if self.on_state:
+                    self.on_state("up")
+        else:
+            self.failures += 1
+            if self.failures >= self.DOWN_AFTER and not self.down:
+                self.down = True
+                if self.on_state:
+                    self.on_state("down")
 
     async def _handle(self, r: asyncio.StreamReader, w: asyncio.StreamWriter):
         try:
@@ -103,11 +164,20 @@ class Forwarder:
                 return
             try:
                 ur, uw, reply = await upstream_connect(self.upstream, atyp, addr)
-            except Exception:
+            except SocksError as e:
+                # the proxy answered: a refused target is the site's problem, not the proxy's
+                self._note("connect failed" in str(e))
                 w.write(b"\x05\x01\x00\x01" + b"\x00" * 6)
                 await w.drain()
                 w.close()
                 return
+            except Exception:
+                self._note(False)
+                w.write(b"\x05\x01\x00\x01" + b"\x00" * 6)
+                await w.drain()
+                w.close()
+                return
+            self._note(True)
             w.write(reply)
             await w.drain()
             await asyncio.gather(_pipe(r, uw), _pipe(ur, w))

@@ -11,6 +11,14 @@
     <h1>Профили <span id="count" class="muted"></span></h1>
     <input id="search" type="search" placeholder="Поиск: имя, тег, IP, страна" spellcheck="false">
     <select id="tagFilter"><option value="">Все теги</option></select>
+    <select id="statusFilter">
+      <option value="">Все статусы</option>
+      <option value="warmup">Прогрев</option>
+      <option value="active">Рабочий</option>
+      <option value="checkpoint">Чекпоинт</option>
+      <option value="banned">Бан</option>
+      <option value="none">Без статуса</option>
+    </select>
     <button id="checkAll">Проверить прокси</button>
     <button id="newBtn" class="primary">Новый профиль</button>
     <button id="settingsBtn" class="ghost" title="Настройки">Настройки</button>
@@ -68,7 +76,18 @@
           <span id="proxyResult" class="muted"></span>
         </div>
 
-        <label>Теги <input name="tags" spellcheck="false" placeholder="через запятую"></label>
+        <div class="row2">
+          <label>Теги <input name="tags" spellcheck="false" placeholder="через запятую"></label>
+          <label>Статус
+            <select name="status">
+              <option value="">—</option>
+              <option value="warmup">Прогрев</option>
+              <option value="active">Рабочий</option>
+              <option value="checkpoint">Чекпоинт</option>
+              <option value="banned">Бан</option>
+            </select>
+          </label>
+        </div>
         <label data-mode="edit">Язык браузера <input name="locale" spellcheck="false"></label>
         <label>Заметки <textarea name="notes" rows="3"></textarea></label>
 

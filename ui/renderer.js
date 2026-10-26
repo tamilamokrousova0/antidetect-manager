@@ -3,6 +3,8 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<
 
 let profiles = [];
 let states = {};          // id -> 'starting' | 'running'
+let proxyStates = {};     // id -> 'down' | 'up' (from the forwarder, only while running)
+const STATUS_LABEL = { warmup: 'Прогрев', active: 'Рабочий', checkpoint: 'Чекпоинт', banned: 'Бан' };
 let selected = new Set();
 let editing = null;       // profile id in the drawer, or 'new'
 let removeProxy = false;
@@ -54,17 +56,28 @@ function exitCell(p) {
   return `<span title="${esc(c.city)} · ${esc(c.isp)} · ${esc(c.provider || 'ip-api.com')}">${esc(c.country)}</span> <span class="mono">${esc(c.ip)}</span> ${flag}${stale} <span class="muted">${c.latency_ms} мс · ${esc(c.city || '')}</span>`;
 }
 
-function matches(p, q, tag) {
+function matches(p, q, tag, status) {
   if (tag && !p.tags.includes(tag)) return false;
+  if (status === 'none' ? p.status : (status && p.status !== status)) return false;
   if (!q) return true;
   const c = p.proxy_check || {};
-  return [p.name, p.notes, p.id, ...p.tags, c.ip, c.country, c.city, p.proxy].join(' ').toLowerCase().includes(q);
+  return [p.name, p.notes, p.id, ...p.tags, c.ip, c.country, c.city, p.proxy, STATUS_LABEL[p.status] || ''].join(' ').toLowerCase().includes(q);
+}
+
+function selfCheckDot(p) {
+  const s = p.self_check;
+  if (!s) return '';
+  const title = s.level === 'ok'
+    ? `Самопроверка после запуска: WebRTC = IP прокси, язык и таймзона совпадают (${ago(s.checked_at)})`
+    : `Самопроверка (${ago(s.checked_at)}): ${(s.problems || []).join('; ') || s.error || ''}`;
+  return `<span class="sc sc-${esc(s.level)}" title="${esc(title)}"></span>`;
 }
 
 function render() {
   const q = $('#search').value.trim().toLowerCase();
   const tag = $('#tagFilter').value;
-  const visible = profiles.filter((p) => matches(p, q, tag));
+  const status = $('#statusFilter').value;
+  const visible = profiles.filter((p) => matches(p, q, tag, status));
 
   $('#count').textContent = profiles.length ? `${profiles.length}` : '';
   $('#empty').hidden = profiles.length > 0;
@@ -73,16 +86,18 @@ function render() {
   $('#rows').innerHTML = visible.map((p) => {
     const st = states[p.id];
     const act = st === 'running'
-      ? `<button class="running" data-stop="${p.id}" title="Браузер открыт">Закрыть</button>`
+      ? (proxyStates[p.id] === 'down'
+        ? `<button class="proxy-down" data-stop="${p.id}" title="Прокси перестал отвечать: соединения из браузера не проходят">Прокси ✕ · Закрыть</button>`
+        : `<button class="running" data-stop="${p.id}" title="Браузер открыт">Закрыть</button>`)
       : st === 'starting'
         ? `<button disabled>Запуск…</button>`
         : `<button data-launch="${p.id}">Запустить</button>`;
     return `<tr data-id="${p.id}" class="${selected.has(p.id) ? 'selected' : ''} ${editing === p.id ? 'active' : ''}">
       <td class="c-check"><input type="checkbox" data-sel="${p.id}" ${selected.has(p.id) ? 'checked' : ''}></td>
-      <td><span class="name">${esc(p.name)}</span>${p.notes ? `<span class="note">${esc(p.notes)}</span>` : ''}</td>
+      <td>${p.status ? `<span class="st st-${esc(p.status)}" title="${esc(STATUS_LABEL[p.status] || p.status)}"></span>` : ''}<span class="name">${esc(p.name)}</span>${p.notes ? `<span class="note">${esc(p.notes)}</span>` : ''}</td>
       <td>${p.tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</td>
       <td>${proxyCell(p)}</td>
-      <td>${exitCell(p)}</td>
+      <td>${selfCheckDot(p)}${exitCell(p)}</td>
       <td class="muted">${ago(p.last_used_at)}</td>
       <td class="c-act">${act}</td>
     </tr>`;
@@ -140,6 +155,7 @@ function openEdit(id) {
   $('#submitBtn').textContent = 'Сохранить';
   form.name.value = p.name;
   form.tags.value = p.tags.join(', ');
+  form.status.value = p.status || '';
   form.notes.value = p.notes;
   form.locale.value = p.locale_manual ? p.locale : '';
   form.locale.placeholder = p.locale_manual || !p.locale ? 'авто: основной язык страны прокси' : `авто: ${p.locale}`;
@@ -155,14 +171,32 @@ function openEdit(id) {
 
 function fillInfo(p) {
   const c = p.proxy_check;
-  const rows = [
-    ['ID', `<span class="mono">${esc(p.id)}</span>`],
-    ['Платформа', esc(`${p.summary.platform || p.os}`)],
-    ['GPU', esc(p.summary.gpu || '—')],
-    ['Создан', new Date(p.created_at * 1000).toLocaleString('ru-RU')],
-  ];
-  if (c?.ok) rows.push(['Проверка', `${esc(c.ip)} · ${esc(c.country_name)} · ${esc(c.timezone)} · ${esc(c.isp)} · ${ago(c.checked_at)}`]);
-  else if (c) rows.push(['Проверка', `<span class="bad">${esc(c.error)}</span>`]);
+  const pp = p.self_check?.passport;
+  const rows = [['ID', `<span class="mono">${esc(p.id)}</span>`]];
+  if (pp) {
+    // what the browser actually presented at the last launch
+    const s = p.self_check;
+    rows.push(
+      ['User-Agent', `<span class="mono">${esc(pp.ua)}</span>`],
+      ['Платформа', esc(pp.platform)],
+      ['Экран', `${esc((pp.screen || []).join('×'))} @${pp.dpr}x · ${pp.cores} ядер`],
+      ['GPU', esc(pp.gpu || '—')],
+      ['Языки', esc((pp.langs || []).join(', '))],
+      ['Таймзона', esc(pp.tz)],
+      ['WebRTC', s.webrtc_ips?.length ? esc(s.webrtc_ips.join(', ')) : 'кандидатов нет'],
+      ['Самопроверка', s.level === 'ok' ? `<span class="ok">OK</span> · ${ago(s.checked_at)}` : `<span class="${s.level === 'bad' ? 'bad' : 'warn'}">${esc((s.problems || []).join('; ') || s.error || '')}</span> · ${ago(s.checked_at)}`],
+    );
+  } else {
+    rows.push(
+      ['Платформа', esc(`${p.summary.platform || p.os}`)],
+      ['GPU', esc(p.summary.gpu || '—')],
+      ['Экран', `${esc(p.summary.screen || '—')} <span class="muted">(оценка; точный паспорт появится после первого запуска)</span>`],
+    );
+  }
+  rows.push(['Создан', new Date(p.created_at * 1000).toLocaleString('ru-RU')]);
+  if (c?.ok) rows.push(['Проверка прокси', `${esc(c.ip)} · ${esc(c.country_name || c.country)} · ${esc(c.timezone)} · ${esc(c.isp)} · ${esc(c.provider || '')} · ${ago(c.checked_at)}${c.stale ? ' · <span class="warn">из кэша</span>' : ''}`]);
+  else if (c) rows.push(['Проверка прокси', `<span class="bad">${esc(c.error)}</span>`]);
+  $('#info').className = 'passport';
   $('#info').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
 }
 
@@ -210,12 +244,12 @@ form.onsubmit = async (e) => {
     if (editing === 'new') {
       const n = Number(f.count) || 1;
       const created = await busy(n > 1 ? `Создаю ${n} профилей…` : 'Создаю профиль…', () =>
-        window.adm.create({ name: f.name.trim(), os: f.os, count: n, proxy: f.proxy.trim(), tags: f.tags, notes: f.notes }));
+        window.adm.create({ name: f.name.trim(), os: f.os, count: n, proxy: f.proxy.trim(), tags: f.tags, notes: f.notes, status: f.status }));
       await refresh();
       status(`Создано: ${created.length}`);
       created.length === 1 ? openEdit(created[0].id) : closeDrawer();
     } else {
-      const upd = { name: f.name.trim(), tags: f.tags, notes: f.notes };
+      const upd = { name: f.name.trim(), tags: f.tags, notes: f.notes, status: f.status };
       const p = profiles.find((x) => x.id === editing);
       const curLocale = p.locale_manual ? p.locale : '';
       if (f.locale.trim() !== curLocale) upd.locale = f.locale.trim();
@@ -331,6 +365,7 @@ $('#newBtn').onclick = openCreate;
 $('#emptyNew').onclick = openCreate;
 $('#search').oninput = render;
 $('#tagFilter').onchange = render;
+$('#statusFilter').onchange = render;
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !$('#drawer').hidden) closeDrawer();
@@ -339,8 +374,14 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'f' && e.metaKey) { e.preventDefault(); $('#search').focus(); }
 });
 
+window.adm.onProxy(({ id, state }) => {
+  proxyStates[id] = state;
+  if (state === 'down') { const p = profiles.find((x) => x.id === id); status(`${p ? p.name : id}: прокси перестал отвечать`, true); }
+  render();
+});
+
 window.adm.onState(({ id, state, error }) => {
-  if (state === 'stopped') delete states[id];
+  if (state === 'stopped') { delete states[id]; delete proxyStates[id]; }
   else states[id] = state;
   if (error) {
     const p = profiles.find((x) => x.id === id);
@@ -440,7 +481,9 @@ $('#stEngineFetch').onclick = () => { $('#settings').hidden = true; $('#engine')
 
 (async () => {
   states = await window.adm.running();
+  proxyStates = await window.adm.proxyStates();
   await busy('Загрузка…', refresh).catch(() => {});
   await engineGate();
   if (location.hash === '#settings') { await openSettings(); $('#stAppCheck').click(); $('#stEngineCheck').click(); }
+  if (location.hash.startsWith('#edit=')) { openEdit(location.hash.slice(6)); setTimeout(() => { $('#drawer').scrollTop = 1e6; }, 500); } // dev aid
 })();

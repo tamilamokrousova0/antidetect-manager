@@ -21,11 +21,15 @@ def _public(p: dict, full: bool = False) -> dict:
     if d.get("proxy"):
         d["proxy"] = parse_proxy(d["proxy"]).to_url(hide_password=True)
     nav = p["fingerprint"].get("navigator", {})
-    # Only fields that reach the page unchanged. UA version, core count and
-    # screen size are adjusted at launch (engine version / host cores / display).
+    scr = p["fingerprint"].get("screen", {}) or {}
+    # Pre-launch estimate: UA version, core count and screen size are adjusted
+    # at launch (engine version / host cores / display). After the first launch
+    # self_check.passport holds what the browser actually presented.
     d["summary"] = {
         "platform": nav.get("platform"),
         "gpu": (p["fingerprint"].get("gpu") or {}).get("renderer"),
+        "screen": f"{scr.get('width')}×{scr.get('height')}" if scr.get("width") else None,
+        "ua": nav.get("userAgent"),
     }
     if full:
         d["fingerprint"] = p["fingerprint"]
@@ -50,7 +54,7 @@ def cmd_create(args, db):
     for i in range(args.count):
         name = args.name if args.count == 1 else f"{args.name}-{i + 1:03d}"
         p = store.create(db, name, args.os, new_fingerprint(args.os), proxy=proxy,
-                         tags=_tags(args) or [], notes=args.notes or "")
+                         tags=_tags(args) or [], notes=args.notes or "", status=args.status or "")
         created.append(_public(p))
     _out(args, created, "\n".join(f"{c['id']}  {c['name']}  {c['summary']}" for c in created))
 
@@ -61,7 +65,7 @@ def cmd_list(args, db):
     for r in rows:
         chk = r.get("proxy_check") or {}
         geo = f"{chk.get('ip')} {chk.get('country')}/{chk.get('city')}" if chk.get("ok") else ("proxy ERR" if chk else "-")
-        lines.append(f"{r['id']}  {r['name']:<24} {r['os']:<8} {geo:<36} {','.join(r['tags'])}")
+        lines.append(f"{r['id']}  {r['name']:<24} {r['os']:<8} {r.get('status') or '-':<10} {geo:<36} {','.join(r['tags'])}")
     _out(args, rows, "\n".join(lines) or "(no profiles)")
 
 
@@ -82,6 +86,8 @@ def cmd_set(args, db):
         fields["tags"] = _tags(args)
     if args.notes is not None:
         fields["notes"] = args.notes
+    if args.status is not None:
+        fields["status"] = args.status
     if args.locale is not None:
         # '' returns the profile to automatic (main language of the proxy country)
         fields["locale"] = args.locale or None
@@ -190,6 +196,7 @@ def main(argv=None):
     c.add_argument("--tag", action="append")
     c.add_argument("--tags", help="comma-separated")
     c.add_argument("--notes")
+    c.add_argument("--status", choices=store.STATUSES, help="warmup | active | checkpoint | banned")
     c.add_argument("--count", type=int, default=1)
     c.set_defaults(fn=cmd_create)
 
@@ -210,6 +217,7 @@ def main(argv=None):
     c.add_argument("--tags", help="comma-separated, '' clears")
     c.add_argument("--locale", help="e.g. en-US; '' = auto by proxy country")
     c.add_argument("--notes")
+    c.add_argument("--status", choices=store.STATUSES, help="'' clears")
     c.set_defaults(fn=cmd_set)
 
     c = sub.add_parser("engine", help="browser engine (Camoufox build) in the user cache dir")

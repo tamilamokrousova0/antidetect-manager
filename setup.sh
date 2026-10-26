@@ -20,6 +20,7 @@ echo "== Проверка ядра"
 PYTHONPATH="$ROOT" .venv/bin/python tests/test_forwarder.py
 PYTHONPATH="$ROOT" .venv/bin/python tests/test_cookies.py
 PYTHONPATH="$ROOT" .venv/bin/python tests/test_proxy_geo.py
+(cd tests && PYTHONPATH="$ROOT" ../.venv/bin/python test_forwarder_state.py)
 ./adm.sh list >/dev/null
 
 echo "== Приложение"

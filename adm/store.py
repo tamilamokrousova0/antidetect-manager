@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS profiles (
   fingerprint   TEXT NOT NULL,      -- JSON, fixed at creation
   locale        TEXT,               -- e.g. de-DE; auto = main language of the proxy country
   locale_manual INTEGER NOT NULL DEFAULT 0,  -- 1 = set by user, never auto-replaced
+  status        TEXT NOT NULL DEFAULT '',   -- '' | warmup | active | checkpoint | banned
+  self_check    TEXT,               -- JSON: in-browser check after launch + passport
   created_at    INTEGER NOT NULL,
   last_used_at  INTEGER
 );
@@ -42,6 +44,10 @@ def connect() -> sqlite3.Connection:
         db.execute("ALTER TABLE profiles ADD COLUMN locale TEXT")
     if "locale_manual" not in cols:
         db.execute("ALTER TABLE profiles ADD COLUMN locale_manual INTEGER NOT NULL DEFAULT 0")
+    if "status" not in cols:
+        db.execute("ALTER TABLE profiles ADD COLUMN status TEXT NOT NULL DEFAULT ''")
+    if "self_check" not in cols:
+        db.execute("ALTER TABLE profiles ADD COLUMN self_check TEXT")
     return db
 
 
@@ -52,6 +58,7 @@ def _row(r: sqlite3.Row | None) -> dict | None:
     d["tags"] = json.loads(d["tags"])
     d["fingerprint"] = json.loads(d["fingerprint"])
     d["proxy_check"] = json.loads(d["proxy_check"]) if d["proxy_check"] else None
+    d["self_check"] = json.loads(d["self_check"]) if d.get("self_check") else None
     return d
 
 
@@ -59,12 +66,15 @@ def profile_dir(pid: str) -> Path:
     return PROFILES_DIR / pid
 
 
+STATUSES = ("", "warmup", "active", "checkpoint", "banned")
+
+
 def create(db, name: str, os_name: str, fingerprint: dict, proxy: str | None = None,
-           tags: list[str] | None = None, notes: str = "") -> dict:
+           tags: list[str] | None = None, notes: str = "", status: str = "") -> dict:
     pid = uuid.uuid4().hex[:12]
     db.execute(
-        "INSERT INTO profiles (id,name,tags,notes,os,proxy,fingerprint,created_at) VALUES (?,?,?,?,?,?,?,?)",
-        (pid, name, json.dumps(tags or []), notes, os_name, proxy, json.dumps(fingerprint), int(time.time())),
+        "INSERT INTO profiles (id,name,tags,notes,os,proxy,fingerprint,status,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        (pid, name, json.dumps(tags or []), notes, os_name, proxy, json.dumps(fingerprint), status, int(time.time())),
     )
     db.commit()
     profile_dir(pid).mkdir(parents=True, exist_ok=True)
@@ -88,7 +98,7 @@ def list_all(db, tag: str | None = None) -> list[dict]:
 
 
 def update(db, pid: str, **fields):
-    for k in ("tags", "fingerprint", "proxy_check"):
+    for k in ("tags", "fingerprint", "proxy_check", "self_check"):
         if k in fields and fields[k] is not None and not isinstance(fields[k], str):
             fields[k] = json.dumps(fields[k])
     sets = ", ".join(f"{k}=?" for k in fields)

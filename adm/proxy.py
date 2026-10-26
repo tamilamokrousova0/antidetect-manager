@@ -24,7 +24,7 @@ class Proxy:
         return f"{self.scheme}://{auth}{self.host}:{self.port}"
 
     def upstream(self) -> Upstream:
-        return Upstream(self.host, self.port, self.username, self.password)
+        return Upstream(self.host, self.port, self.username, self.password, self.scheme)
 
 
 def parse_proxy(s: str) -> Proxy:
@@ -162,31 +162,6 @@ async def _http_get_via_socks(p: Proxy, host: str, path: str, state: dict) -> by
         w.close()
 
 
-async def _http_get_via_http(p: Proxy, host: str, path: str, state: dict) -> bytes:
-    import base64
-    try:
-        r, w = await asyncio.wait_for(asyncio.open_connection(p.host, p.port), PROVIDER_TIMEOUT)
-    except Exception as e:
-        raise ProxyDown(_humanize(e)) from e
-    try:
-        auth = ""
-        if p.username:
-            tok = base64.b64encode(f"{p.username}:{p.password or ''}".encode()).decode()
-            auth = f"Proxy-Authorization: Basic {tok}\r\n"
-        w.write(f"GET http://{host}{path} HTTP/1.1\r\nHost: {host}\r\n{auth}Connection: close\r\n\r\n".encode())
-        await w.drain()
-        raw = await _read_response(r)
-    except Exception as e:
-        raise ProxyDown(_humanize(e)) from e
-    finally:
-        w.close()
-    status = raw.split(b"\r\n", 1)[0]
-    if b" 407 " in status:
-        raise ProxyDown("неверный логин или пароль")
-    state["connected"] = True
-    return raw
-
-
 def _https_get_sync(p: Proxy, host: str, path: str, state: dict) -> bytes:
     """HTTPS through the proxy with PySocks (a camoufox dependency): SOCKS5 or
     HTTP CONNECT, remote DNS, Basic auth."""
@@ -229,8 +204,7 @@ def _https_get_sync(p: Proxy, host: str, path: str, state: dict) -> bytes:
 async def _fetch(p: Proxy, host: str, scheme: str, path: str, state: dict) -> bytes:
     if scheme == "https":
         return await asyncio.to_thread(_https_get_sync, p, host, path, state)
-    fn = _http_get_via_socks if p.scheme == "socks5" else _http_get_via_http
-    return await fn(p, host, path, state)
+    return await _http_get_via_socks(p, host, path, state)  # upstream_connect speaks both socks5 and http
 
 
 def _json_body(raw: bytes) -> dict:

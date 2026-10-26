@@ -286,6 +286,82 @@ async def _reopen_last_tabs(ctx, last_tabs):
             pass
 
 
+def _event(d: dict) -> None:
+    """One JSON line on stdout for the UI (it also reads {"event": "ready"})."""
+    print(json.dumps(d, ensure_ascii=False), flush=True)
+
+
+_SELF_CHECK_JS = r"""
+async () => {
+  const out = {
+    tz: Intl.DateTimeFormat().resolvedOptions().timeZone, langs: navigator.languages,
+    ua: navigator.userAgent, platform: navigator.platform,
+    screen: [screen.width, screen.height], dpr: window.devicePixelRatio,
+    cores: navigator.hardwareConcurrency, webrtc: [],
+    gpu: (() => { try { const g = document.createElement('canvas').getContext('webgl');
+      const d = g.getExtension('WEBGL_debug_renderer_info'); return g.getParameter(d.UNMASKED_RENDERER_WEBGL); } catch (e) { return null; } })(),
+  };
+  try {
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    pc.createDataChannel('x');
+    pc.onicecandidate = (e) => { if (e.candidate) out.webrtc.push(e.candidate.candidate); };
+    await pc.setLocalDescription(await pc.createOffer());
+    await new Promise((r) => setTimeout(r, 3000));
+    pc.close();
+  } catch (e) { out.webrtc_error = String(e); }
+  return out;
+}
+"""
+
+async def _self_check(ctx, db, pid: str, chk: dict, locale: str | None) -> None:
+    """What the site will see, checked from inside the running browser:
+    WebRTC candidates must carry the proxy IP only, the language must match the
+    profile locale, the timezone should match the proxy geo. Stored as
+    profile.self_check (with the "passport") and announced to the UI."""
+    import ipaddress
+    await asyncio.sleep(1.5)
+    try:
+        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+        d = await page.evaluate(_SELF_CHECK_JS)
+    except Exception as e:
+        _event({"event": "selfcheck", "ok": False, "level": "warn", "error": f"{type(e).__name__}: {e}"})
+        return
+    ips = set()
+    for cand in d.get("webrtc") or []:
+        # "candidate:0 1 UDP 2122 <address> <port> typ host ..." -- the address
+        # is an IP or an mDNS name (xxxx.local); only real public IPs matter
+        parts = cand.split()
+        try:
+            ip = ipaddress.ip_address(parts[4])
+        except (IndexError, ValueError):
+            continue
+        if ip.is_global:
+            ips.add(str(ip))
+    leaks = sorted(ip for ip in ips if ip != chk.get("ip"))
+    want_lang = (locale or "").split(",")[0].split("-")[0].lower()
+    got_lang = ((d.get("langs") or [""])[0] or "").split("-")[0].lower()
+    lang_ok = not want_lang or want_lang == got_lang
+    tz_ok = not chk.get("timezone") or d.get("tz") == chk.get("timezone")
+    level = "bad" if (leaks or not lang_ok) else ("warn" if not tz_ok else "ok")
+    problems = []
+    if leaks:
+        problems.append("WebRTC отдаёт не IP прокси: " + ", ".join(leaks))
+    if not lang_ok:
+        problems.append(f"язык браузера {got_lang or '?'} вместо {want_lang}")
+    if not tz_ok:
+        problems.append(f"таймзона браузера {d.get('tz')} ≠ {chk.get('timezone')} по гео прокси")
+    result = {
+        "ok": level != "bad", "level": level, "checked_at": int(time.time()), "problems": problems,
+        "webrtc_ips": sorted(ips), "proxy_ip": chk.get("ip"),
+        "passport": {k: d.get(k) for k in ("ua", "platform", "screen", "dpr", "cores", "gpu", "langs", "tz")},
+    }
+    try:
+        store.update(db, pid, self_check=result)
+    except Exception:
+        pass
+    _event({"event": "selfcheck", **{k: result[k] for k in ("ok", "level", "problems")}})
+
+
 async def launch(ref: str, url: str | None = None, headless: bool = False, on_ready=None):
     db = store.connect()
     p = store.get(db, ref)
@@ -319,16 +395,17 @@ async def launch(ref: str, url: str | None = None, headless: bool = False, on_re
             # country's main language instead; the user can override it.
             locale = main_locale(chk["country"])
             store.update(db, p["id"], locale=locale)
-        if px.scheme == "socks5" and px.username:
-            forwarder = Forwarder(px.upstream())
-            port = await forwarder.start()
-            proxy_opt = {"server": f"socks5://127.0.0.1:{port}"}
-        elif px.scheme == "socks5":
-            proxy_opt = {"server": f"socks5://{px.host}:{px.port}"}
-        else:
-            proxy_opt = {"server": f"http://{px.host}:{px.port}"}
-            if px.username:
-                proxy_opt |= {"username": px.username, "password": px.password or ""}
+        # Every proxy goes through the local forwarder (SOCKS5 or HTTP CONNECT
+        # upstream): the browser never sees credentials, DNS is remote, and the
+        # forwarder notices when the proxy stops answering mid-session.
+        forwarder = Forwarder(px.upstream(), on_state=lambda st: _event({"event": "proxy", "state": st}))
+        port = await forwarder.start()
+        proxy_opt = {"server": f"socks5://127.0.0.1:{port}"}
+        # Real users of a non-English locale almost always carry English as a
+        # secondary language (de-DE,de;q=0.8,en-US;q=0.5,en;q=0.3).
+        if locale and "," not in locale and not locale.lower().startswith("en"):
+            lang = locale.split("-")[0]
+            locale = f"{locale},{lang},en-US,en"  # navigator.languages / Accept-Language as stock Firefox builds them
 
     opts = dict(
         os=p["os"],
@@ -372,6 +449,8 @@ async def launch(ref: str, url: str | None = None, headless: bool = False, on_re
                 await page.goto(url)
             if on_ready:
                 await on_ready(ctx)
+            if p["proxy"] and chk.get("ok"):
+                asyncio.get_running_loop().create_task(_self_check(ctx, db, p["id"], chk, locale))
             await closed.wait()
     finally:
         if forwarder:

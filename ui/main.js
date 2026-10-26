@@ -77,11 +77,23 @@ function launchProfile(id) {
   running.set(id, entry);
   emitState(id, 'starting');
 
+  let buf = '';
   proc.stdout.on('data', (d) => {
-    for (const line of String(d).split('\n')) {
-      if (line.includes('"event": "ready"')) {
+    buf += d;
+    const lines = buf.split('\n');
+    buf = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith('{')) continue;
+      let ev;
+      try { ev = JSON.parse(line); } catch { continue; }
+      if (ev.event === 'ready') {
         entry.state = 'running';
         emitState(id, 'running');
+      } else if (ev.event === 'selfcheck') {
+        emitState(id, 'running'); // renderer re-reads the profile (self_check is stored by the launcher)
+      } else if (ev.event === 'proxy') {
+        entry.proxy = ev.state;
+        if (win && !win.isDestroyed()) win.webContents.send('profile-proxy', { id, state: ev.state });
       }
     }
   });
@@ -115,6 +127,7 @@ ipcMain.handle('create', (_e, o) => {
   if (o.proxy) args.push('--proxy', o.proxy);
   if (o.tags) args.push('--tags', o.tags);
   if (o.notes) args.push('--notes', o.notes);
+  if (o.status) args.push('--status', o.status);
   return runAdm(args);
 });
 ipcMain.handle('update', (_e, id, o) => {
@@ -124,6 +137,7 @@ ipcMain.handle('update', (_e, id, o) => {
   if (o.tags != null) args.push('--tags', o.tags);
   if (o.notes != null) args.push('--notes', o.notes);
   if (o.locale != null) args.push('--locale', o.locale); // '' = auto
+  if (o.status != null) args.push('--status', o.status); // '' = none
   return runAdm(args);
 });
 ipcMain.handle('check', (_e, id) => runAdm(['check', id]));
@@ -185,6 +199,7 @@ ipcMain.handle('cookies-copy', (_e, id) => withCookieLock(id, async () => {
 ipcMain.handle('launch', (_e, id) => launchProfile(id));
 ipcMain.handle('stop', (_e, id) => stopProfile(id));
 ipcMain.handle('running', () => Object.fromEntries([...running].map(([id, e]) => [id, e.state])));
+ipcMain.handle('proxy-states', () => Object.fromEntries([...running].filter(([, e]) => e.proxy).map(([id, e]) => [id, e.proxy])));
 
 // ---------- settings: versions and update checks ----------
 const REPO = 'tamilamokrousova0/antidetect-manager';
