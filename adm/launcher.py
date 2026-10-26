@@ -4,7 +4,11 @@ Blocks until the browser window is closed. The Electron UI will run this as a
 subprocess per profile (`adm launch <id>`), so one crash can't take down others.
 """
 import asyncio
+import json
+import os
 import signal
+import subprocess
+import sys
 import time
 import warnings
 
@@ -44,6 +48,39 @@ def main_locale(country: str) -> str:
     official = [el for el in pops if (el.get("officialStatus") or "").startswith(("official", "de_facto"))]
     best = max(official or pops, key=share)
     return normalize_locale(f"{best.get('type').replace('_', '-')}-{country}").as_string
+
+
+# Font families this Mac really has = what stock Firefox here enumerates.
+# For a native (macOS-on-macOS) identity Camoufox claims only the OS base, so
+# real fonts outside that base (Herculanum, SignPainter, ...) are hidden and the
+# profile measures differently from stock Firefox on the same machine. Pixelscan's
+# mac font check failed on exactly that (plus Rockwell/Kefa, see README).
+_HOST_FONTS_JXA = ('ObjC.import("AppKit"); '
+                   'JSON.stringify(ObjC.deepUnwrap($.NSFontManager.sharedFontManager.availableFontFamilies))')
+
+
+def host_font_families() -> list[str]:
+    if sys.platform != "darwin":
+        return []
+    try:
+        out = subprocess.run(["osascript", "-l", "JavaScript", "-e", _HOST_FONTS_JXA],
+                             capture_output=True, text=True, timeout=15).stdout
+        return [f for f in json.loads(out) if isinstance(f, str)]
+    except Exception:
+        return []
+
+
+def native_mac_fonts() -> list[str]:
+    """Allow-list for Camoufox: every family the host has, plus Camoufox's own
+    macOS catalogue (fonts resolved by name that the family list omits). The
+    list only unhides real fonts; a name that is not installed renders nothing."""
+    fams = host_font_families()
+    if not fams:
+        return []
+    import camoufox
+    with open(os.path.join(os.path.dirname(camoufox.__file__), "fonts.json")) as f:
+        catalog = json.load(f).get("mac", [])
+    return sorted(set(fams) | set(catalog))
 
 
 async def _drop_extra_blank_tabs(ctx):
@@ -107,6 +144,10 @@ async def launch(ref: str, url: str | None = None, headless: bool = False, on_re
     # windows and tabs"; this also keeps session cookies (logins without
     # "remember me") across restarts instead of dropping them on close.
     opts["firefox_user_prefs"] = dict(SESSION_PREFS)
+    if p["os"] == "macos" and sys.platform == "darwin":
+        fonts = native_mac_fonts()
+        if fonts:
+            opts["fonts"] = fonts
     if proxy_opt:
         opts |= dict(proxy=proxy_opt, geoip=geoip, locale=locale)
         # Without this Firefox resolves DNS locally for SOCKS (DNS leak).

@@ -1,6 +1,7 @@
 """Proxy string parsing and checking (exit IP + geo) without extra deps."""
 import asyncio
 import json
+import re
 import time
 from dataclasses import dataclass, asdict
 from urllib.parse import urlsplit, unquote
@@ -56,13 +57,35 @@ def parse_proxy(s: str) -> Proxy:
                  unquote(u.password) if u.password else None)
 
 
+async def _read_response(r: asyncio.StreamReader) -> bytes:
+    """Read exactly one HTTP response. Some proxies ignore `Connection: close`
+    and keep the tunnel open, so reading to EOF would hang until the timeout
+    and the (working) proxy would be reported as dead."""
+    head = await asyncio.wait_for(r.readuntil(b"\r\n\r\n"), 20)
+    lower = head.lower()
+    m = re.search(rb"content-length:\s*(\d+)", lower)
+    if m:
+        body = await asyncio.wait_for(r.readexactly(int(m.group(1))), 20)
+    elif b"transfer-encoding: chunked" in lower:
+        body = b""  # raw chunk framing is kept; check_proxy() runs _dechunk()
+        while True:
+            line = await asyncio.wait_for(r.readuntil(b"\r\n"), 20)
+            size = int(line.split(b";")[0], 16)
+            body += line + await asyncio.wait_for(r.readexactly(size + 2), 20)
+            if size == 0:
+                break
+    else:
+        body = await asyncio.wait_for(r.read(-1), 20)
+    return head + body
+
+
 async def _http_get_via_socks(p: Proxy, host: str, path: str) -> bytes:
     atyp, addr = encode_target(host, 80)
     r, w, _ = await upstream_connect(p.upstream(), atyp, addr)
     try:
         w.write(f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode())
         await w.drain()
-        return await asyncio.wait_for(r.read(-1), 20)
+        return await _read_response(r)
     finally:
         w.close()
 
@@ -77,7 +100,7 @@ async def _http_get_via_http(p: Proxy, host: str, path: str) -> bytes:
             auth = f"Proxy-Authorization: Basic {tok}\r\n"
         w.write(f"GET http://{host}{path} HTTP/1.1\r\nHost: {host}\r\n{auth}Connection: close\r\n\r\n".encode())
         await w.drain()
-        return await asyncio.wait_for(r.read(-1), 20)
+        return await _read_response(r)
     finally:
         w.close()
 
