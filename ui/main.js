@@ -69,11 +69,26 @@ function emitState(id, state, error) {
   if (win && !win.isDestroyed()) win.webContents.send('profile-state', { id, state, error });
 }
 
+// Per-profile launch log (stdout + stderr of the launcher), overwritten on
+// every launch: the UI shows only the last error line, the file has it all.
+const LOGS = () => { const d = path.join(app.getPath('userData'), 'logs'); fs.mkdirSync(d, { recursive: true }); return d; };
+const logPath = (name) => path.join(LOGS(), `${name}.log`);
+function openLog(stream, header) {
+  const ws = fs.createWriteStream(stream, { flags: 'w' });
+  ws.write(`# ${header}\n# ${new Date().toISOString()} · ${process.platform} · app ${app.getVersion()}\n`);
+  return ws;
+}
+
 function launchProfile(id) {
   if (running.has(id)) return;
   if (cookieBusy.has(id)) throw new Error('Идёт импорт/экспорт cookies — запустите после завершения');
   const proc = spawnAdm(['launch', id]);
-  const entry = { proc, state: 'starting', log: [] };
+  const file = logPath(`profile-${id}`);
+  const ws = openLog(file, `launch ${id}`);
+  proc.stdout.on('data', (d) => ws.write(d));
+  proc.stderr.on('data', (d) => ws.write(d));
+  proc.on('close', (code) => { ws.write(`# exit ${code}\n`); ws.end(); });
+  const entry = { proc, state: 'starting', log: [], file };
   running.set(id, entry);
   emitState(id, 'starting');
 
@@ -104,7 +119,7 @@ function launchProfile(id) {
   proc.on('close', (code) => {
     running.delete(id);
     const error = code && code !== 0 && !entry.stopping ? lastErrorLine(entry.log.join('')) || `exit ${code}` : null;
-    emitState(id, 'stopped', error);
+    emitState(id, 'stopped', error ? `${error} (полный лог: карточка профиля → «Лог запуска»)` : null);
   });
 }
 
@@ -219,9 +234,21 @@ ipcMain.handle('app-check-update', async () => {
   const dmg = (rel.assets || []).find((a) => /\.dmg$/.test(a.name));
   return { latest, url: dmg ? dmg.browser_download_url : rel.html_url, page: rel.html_url, newer: newer(latest, app.getVersion()), published: rel.published_at };
 });
-ipcMain.handle('engine-check', () => runAdm(['engine', 'check']));
+// settings.json in userData: { engineChannel: 'stable' | 'beta' }
+const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
+function readSettings() { try { return JSON.parse(fs.readFileSync(SETTINGS_FILE(), 'utf8')); } catch { return {}; } }
+ipcMain.handle('settings-get', () => readSettings());
+ipcMain.handle('settings-set', (_e, patch) => { const s = { ...readSettings(), ...patch }; fs.writeFileSync(SETTINGS_FILE(), JSON.stringify(s, null, 2)); return s; });
+ipcMain.handle('engine-check', () => runAdm(['engine', 'check', '--channel', readSettings().engineChannel === 'beta' ? 'beta' : 'stable']));
 ipcMain.handle('open-external', (_e, url) => (/^https:\/\//.test(url) ? shell.openExternal(url) : Promise.reject(new Error('bad url'))));
 ipcMain.handle('open-path', (_e, p) => shell.openPath(p));
+ipcMain.handle('open-log', async (_e, name) => {
+  const file = logPath(name);
+  if (!fs.existsSync(file)) return false;
+  await shell.openPath(file);
+  return true;
+});
+ipcMain.handle('open-logs-dir', () => shell.openPath(LOGS()));
 
 // ---------- browser engine (first run: ~1.3 GB download into the user cache dir) ----------
 let engineFetch = null;
@@ -230,6 +257,10 @@ ipcMain.handle('engine-fetch', () => new Promise((resolve, reject) => {
   if (engineFetch) return resolve(false);
   const proc = spawnAdm(['engine', 'fetch']);
   engineFetch = proc;
+  const ws = openLog(logPath('engine-fetch'), 'engine fetch');
+  proc.stdout.on('data', (d) => ws.write(d));
+  proc.stderr.on('data', (d) => ws.write(d));
+  proc.on('close', (code) => { ws.write(`# exit ${code}\n`); ws.end(); });
   let err = '', buf = '';
   proc.stdout.on('data', (d) => {
     buf += d;
@@ -247,7 +278,7 @@ ipcMain.handle('engine-fetch', () => new Promise((resolve, reject) => {
   proc.on('close', (code) => {
     engineFetch = null;
     if (code === 0) resolve(true);
-    else reject(new Error(lastErrorLine(err) || `engine fetch exited with ${code}`));
+    else reject(new Error((lastErrorLine(err) || `engine fetch exited with ${code}`) + ' (лог: Настройки → «Папка логов»)'));
   });
 }));
 

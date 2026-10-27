@@ -2,6 +2,7 @@
 
   ./update-engine.sh            check and update if a newer STABLE release exists
   ./update-engine.sh --check    only report
+  ./update-engine.sh --beta     follow pre-releases (also with --check)
   ./update-engine.sh --to 0.5.8 install an exact version (manual rollback)
 
 Each camoufox package release pins the browser build it was tested with
@@ -25,8 +26,11 @@ def pkg_version() -> str:
                                    text=True).strip()
 
 
-def latest_stable() -> str:
+def latest_stable(beta: bool = False) -> str:
     data = json.load(urllib.request.urlopen("https://pypi.org/pypi/camoufox/json", timeout=30))
+    if beta:
+        from adm.engine import _vkey
+        return max((v for v, f in data["releases"].items() if f and not all(x.get("yanked") for x in f)), key=_vkey)
     return data["info"]["version"]  # PyPI "version" is the latest non-prerelease
 
 
@@ -59,7 +63,7 @@ def profiles_running() -> bool:
 
 
 def pip_install(spec: str):
-    subprocess.check_call(["uv", "pip", "install", "--python", str(PY), spec])
+    subprocess.check_call(["uv", "pip", "install", "--python", str(PY), "--prerelease=allow", spec])
 
 
 SMOKE = r'''
@@ -81,10 +85,11 @@ def run_py(code: str):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
+    ap.add_argument("--beta", action="store_true", help="follow pre-releases (Camoufox ships detection fixes there first)")
     ap.add_argument("--to", help="install this exact package version (also for manual rollback)")
     args = ap.parse_args()
 
-    cur, new, browser = pkg_version(), args.to or latest_stable(), active_browser()
+    cur, new, browser = pkg_version(), args.to or latest_stable(args.beta), active_browser()
     write_state()
     print(f"installed: camoufox {cur}, browser {browser}")
     print(f"{'target' if args.to else 'latest stable'}: camoufox {new}")

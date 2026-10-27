@@ -168,7 +168,7 @@ def cmd_engine(args, db):
         _out(args, st, f"camoufox {st['package']}, browser: {st['browser'] or 'NOT INSTALLED'}, "
                        f"geoip: {'ok' if st['geoip'] else 'missing'}  ({st['cache_dir']})")
     elif args.action == "check":
-        r = engine.check()
+        r = engine.check(args.channel)
         _out(args, r, f"camoufox {r['package']} (PyPI: {r.get('pypi_latest') or '?'}), browser {r['browser']} "
                       f"(paired: {r['pin']}, {'ok' if r['browser_paired'] else 'MISMATCH'})")
     elif args.action == "patch":
@@ -222,6 +222,7 @@ def main(argv=None):
 
     c = sub.add_parser("engine", help="browser engine (Camoufox build) in the user cache dir")
     c.add_argument("action", choices=("status", "fetch", "patch", "check"))
+    c.add_argument("--channel", choices=("stable", "beta"), default="stable", help="check: count pre-releases too")
     c.set_defaults(fn=cmd_engine)
 
     c = sub.add_parser("check", help="check proxy of a profile, or 'all'")

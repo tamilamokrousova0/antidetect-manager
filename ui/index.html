@@ -111,6 +111,7 @@
 
         <div class="drawer-foot">
           <button type="submit" class="primary" id="submitBtn"></button>
+          <button type="button" id="showLog" class="ghost" data-mode="edit" title="stdout/stderr последнего запуска этого профиля">Лог запуска</button>
           <button type="button" id="deleteOne" class="danger" data-mode="edit">Удалить</button>
         </div>
       </form>
@@ -148,6 +149,7 @@
         <h3>Движок Camoufox</h3>
         <div class="kv"><span>Пакет camoufox</span><span id="stPkg" class="mono"></span></div>
         <div class="kv"><span>Браузер</span><span id="stBrowser" class="mono"></span></div>
+        <div class="kv"><span>Канал обновлений</span><span><select id="stChannel"><option value="stable">стабильные</option><option value="beta">бета (исправления детекта раньше)</option></select></span></div>
         <div class="btns"><button id="stEngineCheck">Проверить обновления</button><button id="stEngineFetch" hidden class="primary">Скачать парную сборку</button><button id="stCache" class="ghost">Папка движка</button></div>
         <div id="stEngineResult" class="muted"></div>
       </section>
@@ -155,7 +157,7 @@
       <section>
         <h3>Данные</h3>
         <div class="kv"><span>Профили</span><span id="stData" class="mono"></span></div>
-        <div class="btns"><button id="stDataOpen">Открыть папку</button></div>
+        <div class="btns"><button id="stDataOpen">Открыть папку</button><button id="stLogs" class="ghost">Папка логов</button></div>
       </section>
     </div>
   </div>

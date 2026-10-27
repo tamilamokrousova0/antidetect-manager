@@ -54,7 +54,7 @@ for (const rel of T.trim) rmrf(path.join(PY, rel));
 if (!fs.existsSync(path.join(PY, T.py))) throw new Error(`no interpreter at ${path.join(PY, T.py)}`);
 
 console.log('== packages');
-run('uv', ['pip', 'install', '--quiet', '--python-platform', T.uvPlatform, '--python-version', '3.12',
+run('uv', ['pip', 'install', '--quiet', '--prerelease=allow', '--python-platform', T.uvPlatform, '--python-version', '3.12',
   '--only-binary', ':all:', '--target', path.join(OUT, 'pylib'), '-r', path.join(ROOT, 'requirements.txt')], { cwd: ROOT });
 for (const rel of T.pylibDrop) rmrf(path.join(OUT, 'pylib', rel));
 

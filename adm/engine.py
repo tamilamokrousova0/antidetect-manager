@@ -29,13 +29,16 @@ def status() -> dict:
             "data_dir": str(store.DATA_DIR)}
 
 
-def check() -> dict:
+def check(channel: str = "stable") -> dict:
     """Update check: the camoufox package on PyPI (newer package = new app
     release, the package is frozen inside the .app) and whether the installed
     browser build is the one this package pairs with (after an app update the
-    paired build may still need fetching)."""
+    paired build may still need fetching). channel="beta" also counts
+    pre-releases: Camoufox ships detection fixes there first (twice-monthly
+    train; e.g. the hCaptcha Juggler tell was fixed in 0.5.9b1)."""
     import urllib.request
     st = status()
+    st["channel"] = channel
     try:
         from camoufox.browser_pin import effective_pin
         from camoufox.multiversion import load_config
@@ -46,8 +49,12 @@ def check() -> dict:
     st["browser_paired"] = bool(st["browser"]) and (st["pin"] is None or st["browser"] == st["pin"])
     try:
         data = json.load(urllib.request.urlopen("https://pypi.org/pypi/camoufox/json", timeout=20))
-        st["pypi_latest"] = data["info"]["version"]  # latest non-prerelease
-        st["package_outdated"] = _vtuple(st["pypi_latest"]) > _vtuple(st["package"])
+        if channel == "beta":
+            versions = [v for v, files in data["releases"].items() if files and not all(f.get("yanked") for f in files)]
+            st["pypi_latest"] = max(versions, key=_vkey)
+        else:
+            st["pypi_latest"] = data["info"]["version"]  # latest non-prerelease
+        st["package_outdated"] = _vkey(st["pypi_latest"]) > _vkey(st["package"])
     except Exception as e:
         st["pypi_latest"] = None
         st["package_outdated"] = None
@@ -55,9 +62,14 @@ def check() -> dict:
     return st
 
 
-def _vtuple(v: str) -> tuple:
+def _vkey(v: str) -> tuple:
+    """Sortable version: 0.5.9 > 0.5.9b5 > 0.5.9b1 > 0.5.8."""
     import re
-    return tuple(int(x) for x in re.findall(r"\d+", v)[:4])
+    m = re.match(r"(\d+)\.(\d+)\.(\d+)(?:(a|b|rc)(\d+))?", v)
+    if not m:
+        return (0,)
+    pre = {"a": 0, "b": 1, "rc": 2}.get(m.group(4), 3)  # final release sorts last
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)), pre, int(m.group(5) or 0))
 
 
 def fetch(progress=None) -> None:
@@ -85,7 +97,10 @@ def fetch(progress=None) -> None:
     emit({"stage": "start"})
     # click: standalone_mode=False -> exceptions propagate instead of sys.exit
     cli.main(args=["fetch"], standalone_mode=False)
-    apply_patches()
+    try:
+        apply_patches()
+    except Exception as e:  # a failed patch must not fail the download; launch retries it
+        print(f"warning: policies patch skipped: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
     emit({"stage": "done", **status()})
 
 

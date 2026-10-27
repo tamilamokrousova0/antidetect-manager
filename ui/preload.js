@@ -23,6 +23,10 @@ contextBridge.exposeInMainWorld('adm', {
   appInfo: () => ipcRenderer.invoke('app-info'),
   appCheckUpdate: () => ipcRenderer.invoke('app-check-update'),
   engineCheck: () => ipcRenderer.invoke('engine-check'),
+  settingsGet: () => ipcRenderer.invoke('settings-get'),
+  settingsSet: (patch) => ipcRenderer.invoke('settings-set', patch),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   openPath: (p) => ipcRenderer.invoke('open-path', p),
+  openLog: (name) => ipcRenderer.invoke('open-log', name),
+  openLogsDir: () => ipcRenderer.invoke('open-logs-dir'),
 });

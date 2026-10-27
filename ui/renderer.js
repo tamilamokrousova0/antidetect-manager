@@ -446,12 +446,18 @@ async function openSettings() {
     $('#stPkg').textContent = st.package;
     $('#stBrowser').textContent = st.browser || 'не установлен';
     $('#stData').textContent = st.data_dir; dataDir = st.data_dir; cacheDir = st.cache_dir;
+    $('#stChannel').value = (await window.adm.settingsGet()).engineChannel === 'beta' ? 'beta' : 'stable';
   } catch (e) { status(errText(e), true); }
 }
 $('#settingsBtn').onclick = openSettings;
 $('#settingsClose').onclick = () => { $('#settings').hidden = true; };
 $('#stRepo').onclick = async () => window.adm.openExternal((await window.adm.appInfo()).repo);
 $('#stDataOpen').onclick = () => dataDir && window.adm.openPath(dataDir);
+$('#stLogs').onclick = () => window.adm.openLogsDir();
+$('#showLog').onclick = async () => {
+  if (!editing || editing === 'new') return;
+  if (!(await window.adm.openLog(`profile-${editing}`))) status('Этот профиль ещё не запускался из приложения — лога нет');
+};
 $('#stCache').onclick = () => cacheDir && window.adm.openPath(cacheDir);
 $('#stAppOpen').onclick = () => appUpdateUrl && window.adm.openExternal(appUpdateUrl);
 $('#stAppCheck').onclick = async () => {
@@ -463,13 +469,15 @@ $('#stAppCheck').onclick = async () => {
     else out.textContent = `Установлена последняя версия (${r.latest} на GitHub)`;
   } catch (e) { out.textContent = 'Не удалось проверить: ' + errText(e); }
 };
+$('#stChannel').onchange = async () => { await window.adm.settingsSet({ engineChannel: $('#stChannel').value }); $('#stEngineResult').textContent = ''; };
 $('#stEngineCheck').onclick = async () => {
   const out = $('#stEngineResult'); out.textContent = 'Проверяю PyPI и установленную сборку…'; $('#stEngineFetch').hidden = true;
   try {
     const r = await window.adm.engineCheck();
     const parts = [];
-    if (r.package_outdated) parts.push(`На PyPI camoufox ${r.pypi_latest}, в приложении ${r.package}: новый движок придёт с обновлением приложения.`);
-    else if (r.pypi_latest) parts.push(`Пакет camoufox актуален (${r.package}).`);
+    const ch = r.channel === 'beta' ? 'бета' : 'стабильные';
+    if (r.package_outdated) parts.push(`На PyPI camoufox ${r.pypi_latest} (канал: ${ch}), в приложении ${r.package}: новый движок придёт с обновлением приложения.`);
+    else if (r.pypi_latest) parts.push(`Пакет camoufox актуален (${r.package}, канал: ${ch}).`);
     else parts.push(r.error || 'PyPI недоступен.');
     if (!r.browser) { parts.push('Браузер не установлен.'); $('#stEngineFetch').hidden = false; }
     else if (!r.browser_paired) { parts.push(`Установлен браузер ${r.browser}, а этой версии нужен ${r.pin}.`); $('#stEngineFetch').hidden = false; }

@@ -301,6 +301,13 @@ async () => {
     gpu: (() => { try { const g = document.createElement('canvas').getContext('webgl');
       const d = g.getExtension('WEBGL_debug_renderer_info'); return g.getParameter(d.UNMASKED_RENDERER_WEBGL); } catch (e) { return null; } })(),
   };
+  // IPv6-only endpoint: a proxied profile must look like an IPv4-only network
+  // (Camoufox < 0.5.9 let IPv6 literals and AAAA-only hosts through, #849).
+  try {
+    const ctl = new AbortController(); setTimeout(() => ctl.abort(), 6000);
+    const r = await fetch('https://api6.ipify.org/?format=text', { cache: 'no-store', signal: ctl.signal });
+    out.ipv6 = (await r.text()).trim();
+  } catch (e) { out.ipv6 = null; out.ipv6_error = String(e && e.name || e); }
   try {
     const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
     pc.createDataChannel('x');
@@ -313,16 +320,30 @@ async () => {
 }
 """
 
+def _host_ipv6() -> str | None:
+    """This machine's public IPv6 (direct, no proxy) -- the address that must
+    never show up inside a proxied profile."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen("https://api6.ipify.org/?format=text", timeout=5) as r:
+            return r.read().decode().strip() or None
+    except Exception:
+        return None
+
+
 async def _self_check(ctx, db, pid: str, chk: dict, locale: str | None) -> None:
     """What the site will see, checked from inside the running browser:
-    WebRTC candidates must carry the proxy IP only, the language must match the
-    profile locale, the timezone should match the proxy geo. Stored as
+    WebRTC candidates must carry the proxy IP only, an IPv6-only host must not
+    answer with this machine's IPv6, the language must match the profile
+    locale, the timezone should match the proxy geo. Stored as
     profile.self_check (with the "passport") and announced to the UI."""
     import ipaddress
     await asyncio.sleep(1.5)
     try:
         page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+        host6_task = asyncio.get_running_loop().run_in_executor(None, _host_ipv6)
         d = await page.evaluate(_SELF_CHECK_JS)
+        host6 = await host6_task
     except Exception as e:
         _event({"event": "selfcheck", "ok": False, "level": "warn", "error": f"{type(e).__name__}: {e}"})
         return
@@ -338,14 +359,21 @@ async def _self_check(ctx, db, pid: str, chk: dict, locale: str | None) -> None:
         if ip.is_global:
             ips.add(str(ip))
     leaks = sorted(ip for ip in ips if ip != chk.get("ip"))
+    ipv6 = d.get("ipv6")
+    ipv6_leak = bool(ipv6 and host6 and ipv6 == host6)
+    if ipv6 and host6 is None:
+        # cannot tell whose address it is; through a SOCKS tunnel it is the proxy's
+        ipv6_leak = False
     want_lang = (locale or "").split(",")[0].split("-")[0].lower()
     got_lang = ((d.get("langs") or [""])[0] or "").split("-")[0].lower()
     lang_ok = not want_lang or want_lang == got_lang
     tz_ok = not chk.get("timezone") or d.get("tz") == chk.get("timezone")
-    level = "bad" if (leaks or not lang_ok) else ("warn" if not tz_ok else "ok")
+    level = "bad" if (leaks or ipv6_leak or not lang_ok) else ("warn" if not tz_ok else "ok")
     problems = []
     if leaks:
         problems.append("WebRTC отдаёт не IP прокси: " + ", ".join(leaks))
+    if ipv6_leak:
+        problems.append(f"IPv6-only сайт видит адрес этого компьютера: {ipv6}")
     if not lang_ok:
         problems.append(f"язык браузера {got_lang or '?'} вместо {want_lang}")
     if not tz_ok:
@@ -353,6 +381,7 @@ async def _self_check(ctx, db, pid: str, chk: dict, locale: str | None) -> None:
     result = {
         "ok": level != "bad", "level": level, "checked_at": int(time.time()), "problems": problems,
         "webrtc_ips": sorted(ips), "proxy_ip": chk.get("ip"),
+        "ipv6": ipv6, "host_ipv6": host6,  # ipv6=None: IPv6-only host unreachable, as on an IPv4-only network
         "passport": {k: d.get(k) for k in ("ua", "platform", "screen", "dpr", "cores", "gpu", "langs", "tz")},
     }
     try:
