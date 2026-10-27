@@ -126,23 +126,35 @@ def new_tab_button_pref(p: dict) -> dict:
     return {}
 
 
-def write_badge_addon(p: dict) -> str:
-    """Tiny per-profile WebExtension that prefixes every window title with the
+def write_badge_addon(p: dict, reopen: list[str] | None = None) -> str:
+    """Tiny per-profile WebExtension: prefixes every window title with the
     profile name ("FB Anna — Facebook — Camoufox"), so open profiles are told
-    apart at a glance. windows.update(titlePreface) is browser chrome only:
-    document.title and anything a page can read stay untouched. userChrome.css
-    is not an option: Camoufox does not load legacy profile customizations."""
+    apart at a glance (windows.update(titlePreface) is browser chrome only:
+    document.title and anything a page can read stay untouched; userChrome.css
+    is not an option, Camoufox does not load it). It also reopens the tabs
+    remembered when the user closed the last window (reopen.json): tabs.create
+    makes real tabs in the one window, whereas Playwright's new_page() opens a
+    new WINDOW per tab in Firefox -- five remembered tabs came back as five
+    windows, and session restore then kept five windows forever."""
     d = store.profile_dir(p) / "badge-addon"
     d.mkdir(parents=True, exist_ok=True)
     manifest = {
         "manifest_version": 2,
         "name": f"Профиль: {p['name']}",
-        "description": "Имя профиля в заголовке окна (antidetect-manager)",
-        "version": "1.0",
+        "description": "Имя профиля в заголовке окна, восстановление вкладок (antidetect-manager)",
+        "version": "1.1",
         "browser_specific_settings": {"gecko": {"id": f"badge-{p['id']}@antidetect-manager"}},
+        "permissions": ["tabs"],
         "background": {"scripts": ["background.js"]},
     }
     (d / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1))
+    # merge_once: a profile that already accumulated several windows from the
+    # old reopen path (one window per remembered tab) gets them merged into one
+    # on its next launch, a single time, so deliberate multi-window use later
+    # is left alone.
+    merged = store.profile_dir(p) / ".windows-merged"
+    (d / "reopen.json").write_text(json.dumps({"urls": reopen or [], "merge_once": not merged.exists()}))
+    merged.touch()
     (d / "background.js").write_text(
         f"const PREFACE = {json.dumps(p['name'] + ' — ', ensure_ascii=False)};\n"
         "const apply = (id) => browser.windows.update(id, { titlePreface: PREFACE }).catch(() => {});\n"
@@ -152,7 +164,38 @@ def write_badge_addon(p: dict) -> str:
         "// the background may start before the first window exists, and a title\n"
         "// change from the page re-renders without the preface on some builds\n"
         "browser.tabs.onUpdated.addListener((_id, info, tab) => { if (info.title || info.status === 'complete') apply(tab.windowId); });\n"
-        "setTimeout(all, 1500); setTimeout(all, 5000);\n")
+        "setTimeout(all, 1500); setTimeout(all, 5000);\n"
+        "// Reopen remembered tabs as TABS of the first window, only if session restore\n"
+        "// brought nothing back (every tab still blank). 3 s: after the launcher has\n"
+        "// trimmed the extra blank pages Playwright opens on top of the session.\n"
+        "const BLANK = (u) => !u || u === 'about:blank' || u === 'about:newtab' || u === 'about:home';\n"
+        "setTimeout(async () => {\n"
+        "  let plan = { urls: [], merge_once: false };\n"
+        "  try { plan = await (await fetch(browser.runtime.getURL('reopen.json'))).json(); } catch (e) { return; }\n"
+        "  try {\n"
+        "    if (plan.merge_once) {\n"
+        "      const wins = await browser.windows.getAll({ populate: true, windowTypes: ['normal'] });\n"
+        "      if (wins.length > 1) {\n"
+        "        // tabs.move across windows swaps docshells, which Playwright's Firefox\n"
+        "        // does not survive (the moved tabs died); recreate them instead\n"
+        "        const target = wins[0];\n"
+        "        for (const w of wins.slice(1)) {\n"
+        "          for (const t of w.tabs) if (!BLANK(t.url)) await browser.tabs.create({ url: t.url, windowId: target.id, active: false });\n"
+        "          await browser.windows.remove(w.id);\n"
+        "        }\n"
+        "      }\n"
+        "    }\n"
+        "  } catch (e) {}\n"
+        "  try {\n"
+        "    const urls = plan.urls || [];\n"
+        "    if (!urls.length) return;\n"
+        "    const tabs = await browser.tabs.query({});\n"
+        "    if (!tabs.length || !tabs.every((t) => BLANK(t.url))) return;\n"
+        "    const first = tabs[0];\n"
+        "    await browser.tabs.update(first.id, { url: urls[0] });\n"
+        "    for (const u of urls.slice(1)) await browser.tabs.create({ url: u, windowId: first.windowId, active: false });\n"
+        "  } catch (e) {}\n"
+        "}, 3000);\n")
     return str(d)
 
 
@@ -289,26 +332,6 @@ def _close_with_last_window(ctx, closed: asyncio.Event, last_tabs):
     for p in ctx.pages:
         watch(p)
     ctx.on("page", watch)
-
-
-async def _reopen_last_tabs(ctx, last_tabs):
-    """Session restore gives nothing back after the user closed the last window
-    (see _close_with_last_window): reopen the remembered tabs instead."""
-    if not last_tabs.exists():
-        return
-    try:
-        tabs = json.loads(last_tabs.read_text())
-    finally:
-        last_tabs.unlink(missing_ok=True)
-    if not tabs or any(p.url != "about:blank" for p in ctx.pages):
-        return
-    page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-    for i, url in enumerate(tabs):
-        p = page if i == 0 else await ctx.new_page()
-        try:
-            await p.goto(url, wait_until="commit", timeout=30000)
-        except Exception:
-            pass
 
 
 def _event(d: dict) -> None:
@@ -469,6 +492,7 @@ async def launch(ref: str, url: str | None = None, headless: bool = False, on_re
         user_data_dir=str(store.profile_dir(p)),
         headless=headless,
         humanize=False,
+        allow_addon_new_tab=True,  # the badge addon reopens remembered tabs with tabs.create
     )
     # Restore previous tabs on start, like a normal browser with "open previous
     # windows and tabs"; this also keeps session cookies (logins without
@@ -484,7 +508,15 @@ async def launch(ref: str, url: str | None = None, headless: bool = False, on_re
         opts["firefox_user_prefs"]["network.proxy.socks_remote_dns"] = True
 
     store.update(db, p["id"], last_used_at=int(time.time()))
-    opts["addons"] = [write_badge_addon(p)]
+    last_tabs = store.profile_dir(p) / "last_tabs.json"
+    reopen = []
+    if last_tabs.exists():
+        try:
+            reopen = json.loads(last_tabs.read_text())
+        except ValueError:
+            pass
+        last_tabs.unlink(missing_ok=True)
+    opts["addons"] = [write_badge_addon(p, reopen)]
     from .engine import apply_patches
     apply_patches()  # engine may have been (re)installed by hand; keeps logins enabled
     try:
@@ -496,8 +528,6 @@ async def launch(ref: str, url: str | None = None, headless: bool = False, on_re
             # orphaned Firefox is left behind.
             _stop_requests(closed)
             await _drop_extra_blank_tabs(ctx)
-            last_tabs = store.profile_dir(p) / "last_tabs.json"
-            await _reopen_last_tabs(ctx, last_tabs)
             page = ctx.pages[0] if ctx.pages else await ctx.new_page()
             _close_with_last_window(ctx, closed, last_tabs)
             if url:
