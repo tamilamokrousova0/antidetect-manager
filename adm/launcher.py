@@ -59,67 +59,71 @@ SESSION_PREFS = {
     # Native title bar above the tabs, so the window title (which the badge
     # addon prefixes with the profile name) is actually visible on macOS.
     "browser.tabs.inTitlebar": 0,
+    # Geolocation comes from the proxy geo (Camoufox answers inside the network
+    # provider). The OS providers are off: with them Firefox asks macOS /
+    # Windows for Location Services and, when the app has no permission,
+    # opens System Settings on every site request.
+    "geo.provider.use_corelocation": False,
+    "geo.provider.ms-windows-location": False,
+    "geo.provider.use_geoclue": False,
+    "geo.prompt.open_system_prefs": False,
 }
 
 
-# Camoufox's toolbar default puts the new-tab "+" and the all-tabs menu at the
-# far right of the navigation bar, where nobody looks for them ("there is no +
-# for a new tab"). The tab strip itself cannot take them: this build bounces
-# any widget placed in TabsToolbar (or the bookmarks bar) straight back into
-# the nav-bar, so the best visible spot is right after the address bar.
-_DEFAULT_UI_STATE = {
-    "placements": {
-        "widget-overflow-fixed-list": [], "unified-extensions-area": [],
-        "nav-bar": ["back-button", "forward-button", "stop-reload-button", "customizableui-special-spring1",
-                    "vertical-spacer", "urlbar-container", "customizableui-special-spring2", "downloads-button",
-                    "fxa-toolbar-menu-button", "reset-pbm-toolbar-button", "unified-extensions-button",
-                    "new-tab-button", "customizableui-special-spring3", "alltabs-button", "personal-bookmarks"],
-        "TabsToolbar": ["tabbrowser-tabs"], "vertical-tabs": [], "PersonalToolbar": [],
-    },
-    "seen": ["reset-pbm-toolbar-button", "developer-button"],
-    "dirtyAreaCache": ["nav-bar", "TabsToolbar", "vertical-tabs", "PersonalToolbar"],
-    "currentVersion": 26, "newElementCount": 3,
-}
+# Toolbar layout. Camoufox 156 parked the new-tab "+" and the all-tabs menu at
+# the far right of the navigation bar and left two flexible springs there, so
+# the right side of the address bar was a row of gaps. Firefox 158 keeps the
+# stock layout for a fresh profile ("+" next to the tabs), so new profiles get
+# no override at all; profiles with a saved state are rewritten once:
+# "+" and all-tabs back into the tab strip, springs / Firefox-account button /
+# bookmarks-items out of the nav-bar.
+_NAVBAR_DROP = {"new-tab-button", "alltabs-button", "smartwindow-group-tabs-button", "ai-window-toggle",
+                "customizableui-special-spring2", "customizableui-special-spring3",
+                "fxa-toolbar-menu-button", "personal-bookmarks", "reset-pbm-toolbar-button"}
+_TABSTRIP_EXTRAS = ("smartwindow-group-tabs-button", "ai-window-toggle")
 
 
-def _tabs_with_new_tab_button(state: dict) -> dict:
-    """new-tab-button (+) and alltabs-button right after the address bar."""
+def _toolbar_layout(state: dict) -> dict:
     pl = state.setdefault("placements", {})
-    nav = [w for w in pl.get("nav-bar", []) if w not in ("new-tab-button", "alltabs-button")]
-    i = nav.index("urlbar-container") + 1 if "urlbar-container" in nav else len(nav)
-    pl["nav-bar"] = nav[:i] + ["new-tab-button", "alltabs-button"] + nav[i:]
+    nav = pl.get("nav-bar", [])
+    extras = [w for w in nav if w in _TABSTRIP_EXTRAS]
+    pl["nav-bar"] = [w for w in nav if w not in _NAVBAR_DROP]
+    tabs = [w for w in pl.get("TabsToolbar", []) if w not in ("new-tab-button", "alltabs-button") and w not in extras]
+    if "tabbrowser-tabs" not in tabs:
+        tabs.insert(0, "tabbrowser-tabs")
+    i = tabs.index("tabbrowser-tabs") + 1
+    pl["TabsToolbar"] = tabs[:i] + ["new-tab-button", "alltabs-button"] + tabs[i:] + extras
     for area in list(pl):
-        if area != "nav-bar":
+        if area not in ("nav-bar", "TabsToolbar"):
             pl[area] = [w for w in pl[area] if w not in ("new-tab-button", "alltabs-button")]
     return state
 
 
 def new_tab_button_pref(p: dict) -> dict:
-    """Once per profile: move the buttons in the saved toolbar state (prefs.js,
-    profile closed). A profile without a saved state gets the corrected default
-    as a launch pref until Firefox saves one. A marker keeps later user
-    customisation (toolbar "Customize") untouched."""
+    """Once per profile (marker .toolbar-v2): rewrite the saved toolbar state in
+    prefs.js (profile closed). Nothing for a profile without a saved state:
+    the Firefox 158 default already has "+" in the tab strip. The marker keeps
+    later user customisation (toolbar "Customize") untouched."""
     import re
     d = store.profile_dir(p)
-    marker = d / ".newtab-fixed"
+    marker = d / ".toolbar-v2"
     prefs = d / "prefs.js"
     key = "browser.uiCustomization.state"
+    if marker.exists():
+        return {}
     if prefs.exists():
         text = prefs.read_text()
         m = re.search(r'user_pref\("%s", (".*?")\);' % re.escape(key), text)
         if m:
-            if not marker.exists():
-                try:
-                    state = _tabs_with_new_tab_button(json.loads(json.loads(m.group(1))))
-                    text = text[:m.start(1)] + json.dumps(json.dumps(state)) + text[m.end(1):]
-                    prefs.write_text(text)
-                except (ValueError, KeyError):
-                    pass
-                marker.touch()
-            return {}
-    if marker.exists():
-        return {}
-    return {key: json.dumps(_tabs_with_new_tab_button(json.loads(json.dumps(_DEFAULT_UI_STATE))))}
+            try:
+                state = _toolbar_layout(json.loads(json.loads(m.group(1))))
+                text = text[:m.start(1)] + json.dumps(json.dumps(state)) + text[m.end(1):]
+                prefs.write_text(text)
+            except (ValueError, KeyError):
+                pass
+    marker.touch()
+    (d / ".newtab-fixed").unlink(missing_ok=True)
+    return {}
 
 
 def write_badge_addon(p: dict) -> str:
@@ -142,8 +146,13 @@ def write_badge_addon(p: dict) -> str:
     (d / "background.js").write_text(
         f"const PREFACE = {json.dumps(p['name'] + ' — ', ensure_ascii=False)};\n"
         "const apply = (id) => browser.windows.update(id, { titlePreface: PREFACE }).catch(() => {});\n"
-        "browser.windows.getAll().then((ws) => ws.forEach((w) => apply(w.id)));\n"
-        "browser.windows.onCreated.addListener((w) => apply(w.id));\n")
+        "const all = () => browser.windows.getAll().then((ws) => ws.forEach((w) => apply(w.id)));\n"
+        "all();\n"
+        "browser.windows.onCreated.addListener((w) => apply(w.id));\n"
+        "// the background may start before the first window exists, and a title\n"
+        "// change from the page re-renders without the preface on some builds\n"
+        "browser.tabs.onUpdated.addListener((_id, info, tab) => { if (info.title || info.status === 'complete') apply(tab.windowId); });\n"
+        "setTimeout(all, 1500); setTimeout(all, 5000);\n")
     return str(d)
 
 
