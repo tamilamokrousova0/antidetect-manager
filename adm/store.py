@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   locale        TEXT,               -- e.g. de-DE; auto = main language of the proxy country
   locale_manual INTEGER NOT NULL DEFAULT 0,  -- 1 = set by user, never auto-replaced
   status        TEXT NOT NULL DEFAULT '',   -- '' | warmup | active | checkpoint | banned
+  dir           TEXT,               -- folder name under profiles/ (= sanitized profile name; the id for old rows)
   self_check    TEXT,               -- JSON: in-browser check after launch + passport
   created_at    INTEGER NOT NULL,
   last_used_at  INTEGER
@@ -48,6 +49,10 @@ def connect() -> sqlite3.Connection:
         db.execute("ALTER TABLE profiles ADD COLUMN status TEXT NOT NULL DEFAULT ''")
     if "self_check" not in cols:
         db.execute("ALTER TABLE profiles ADD COLUMN self_check TEXT")
+    if "dir" not in cols:
+        db.execute("ALTER TABLE profiles ADD COLUMN dir TEXT")
+        db.execute("UPDATE profiles SET dir = id")  # existing folders are named by id; renamed on next list/launch
+        db.commit()
     return db
 
 
@@ -62,8 +67,58 @@ def _row(r: sqlite3.Row | None) -> dict | None:
     return d
 
 
-def profile_dir(pid: str) -> Path:
-    return PROFILES_DIR / pid
+_BAD = set('<>:"/\\|?*') | {chr(i) for i in range(32)}
+
+
+def safe_dirname(name: str) -> str:
+    """Profile name as a folder name: readable in Finder/Explorer, safe on
+    every filesystem (no path separators, Windows-reserved chars/names,
+    trailing dots or spaces), at most 60 chars."""
+    s = "".join("_" if c in _BAD else c for c in (name or "")).strip(" .")
+    s = " ".join(s.split())[:60].rstrip(" .")
+    if s.upper().split(".")[0] in {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 10)} | {f"LPT{i}" for i in range(1, 10)}:
+        s = f"_{s}"
+    return s
+
+
+def profile_dir(p) -> Path:
+    """Folder of a profile: pass the profile dict (preferred) or its id."""
+    if isinstance(p, dict):
+        return PROFILES_DIR / (p.get("dir") or p["id"])
+    db = connect()
+    row = db.execute("SELECT dir FROM profiles WHERE id=?", (p,)).fetchone()
+    return PROFILES_DIR / ((row[0] if row and row[0] else None) or p)
+
+
+def _locked(d: Path) -> bool:
+    """Firefox holds .parentlock (macOS/Linux) or parent.lock (Windows) while running."""
+    return (d / ".parentlock").exists() or (d / "parent.lock").exists() or (d / "lock").exists()
+
+
+def desired_dir(db, p: dict) -> str:
+    base = safe_dirname(p["name"]) or p["id"]
+    taken = {r[0] for r in db.execute("SELECT dir FROM profiles WHERE id<>? AND dir IS NOT NULL", (p["id"],))}
+    if base in taken:
+        base = f"{base}-{p['id'][:6]}"
+    return base
+
+
+def sync_dir(db, p: dict) -> dict:
+    """Make the folder name follow the profile name. Skipped while the browser
+    holds the folder (renamed on the next launch instead)."""
+    want = desired_dir(db, p)
+    cur = p.get("dir") or p["id"]
+    if want == cur:
+        return p
+    old = PROFILES_DIR / cur
+    new = PROFILES_DIR / want
+    if old.exists():
+        if _locked(old) or new.exists():
+            return p
+        old.rename(new)
+    update(db, p["id"], dir=want)
+    p["dir"] = want
+    return p
 
 
 STATUSES = ("", "warmup", "active", "checkpoint", "banned")
@@ -77,7 +132,10 @@ def create(db, name: str, os_name: str, fingerprint: dict, proxy: str | None = N
         (pid, name, json.dumps(tags or []), notes, os_name, proxy, json.dumps(fingerprint), status, int(time.time())),
     )
     db.commit()
-    profile_dir(pid).mkdir(parents=True, exist_ok=True)
+    p = get(db, pid)
+    d = desired_dir(db, p)
+    update(db, pid, dir=d)
+    (PROFILES_DIR / d).mkdir(parents=True, exist_ok=True)
     return get(db, pid)
 
 
@@ -91,7 +149,7 @@ def get(db, ref: str) -> dict | None:
 
 
 def list_all(db, tag: str | None = None) -> list[dict]:
-    rows = [_row(r) for r in db.execute("SELECT * FROM profiles ORDER BY created_at")]
+    rows = [sync_dir(db, _row(r)) for r in db.execute("SELECT * FROM profiles ORDER BY created_at")]
     if tag:
         rows = [r for r in rows if tag in r["tags"]]
     return rows
@@ -108,6 +166,8 @@ def update(db, pid: str, **fields):
 
 def delete(db, pid: str):
     import shutil
+    p = get(db, pid)
     db.execute("DELETE FROM profiles WHERE id=?", (pid,))
     db.commit()
-    shutil.rmtree(profile_dir(pid), ignore_errors=True)
+    if p:
+        shutil.rmtree(profile_dir(p), ignore_errors=True)

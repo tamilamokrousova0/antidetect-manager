@@ -54,7 +54,18 @@ for (const rel of T.trim) rmrf(path.join(PY, rel));
 if (!fs.existsSync(path.join(PY, T.py))) throw new Error(`no interpreter at ${path.join(PY, T.py)}`);
 
 console.log('== packages');
-run('uv', ['pip', 'install', '--quiet', '--prerelease=allow', '--python-platform', T.uvPlatform, '--python-version', '3.12',
+const native = platform === (process.platform === 'win32' ? 'win' : 'mac');
+// Host platform: resolve with the bundled interpreter itself, so wheel selection
+// sees the real OS version. A bare --python-platform assumes an old macOS and
+// picked indexed_zstd 1.6.1 (macosx_11_0), whose .so is missing its zstd
+// symbols; the working 1.7.2 wheel is tagged macosx_15_0. Cross-builds keep
+// the explicit platform (nothing can be executed for them anyway).
+const resolve = native
+  ? ['--python', path.join(PY, T.py)]
+  : ['--python-platform', T.uvPlatform, '--python-version', '3.12'];
+// no --prerelease=allow: uv already accepts the pre-release that requirements.txt pins
+// explicitly, while the global flag pulled httpx 1.0.dev (no httpx.get) into 0.2.3
+run('uv', ['pip', 'install', '--quiet', ...resolve,
   '--only-binary', ':all:', '--target', path.join(OUT, 'pylib'), '-r', path.join(ROOT, 'requirements.txt')], { cwd: ROOT });
 for (const rel of T.pylibDrop) rmrf(path.join(OUT, 'pylib', rel));
 
@@ -80,8 +91,10 @@ const expect = platform === 'win'
   ? ['pylib/playwright/driver/node.exe', 'pylib/camoufox/fonts.json', 'python/python312.dll']
   : ['pylib/playwright/driver/node', 'pylib/camoufox/fonts.json', 'python/lib/libpython3.12.dylib'];
 for (const rel of expect) if (!fs.existsSync(path.join(OUT, rel))) throw new Error(`missing ${rel}`);
-if (platform === (process.platform === 'win32' ? 'win' : 'mac')) {
-  run(path.join(PY, T.py), ['-c', 'import camoufox, playwright, numpy; print("imports ok")'],
+if (native) {
+  // every compiled dependency the launch path touches -- a wheel built for the
+  // wrong OS version fails only here, not at `import camoufox`
+  run(path.join(PY, T.py), ['-c', 'import camoufox, camoufox.utils, playwright, numpy, fpgen, indexed_zstd, orjson, maxminddb; print("imports ok")'],
     { env: { ...process.env, PYTHONPATH: `${OUT}${path.delimiter}${path.join(OUT, 'pylib')}`, PYTHONNOUSERSITE: '1' } });
   run(path.join(PY, T.py), ['-m', 'adm.cli', '--json', 'engine', 'status'],
     { env: { ...process.env, PYTHONPATH: `${OUT}${path.delimiter}${path.join(OUT, 'pylib')}`, PYTHONNOUSERSITE: '1' }, stdio: 'ignore' });

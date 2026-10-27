@@ -78,13 +78,13 @@ def _tabs_with_new_tab_button(state: dict) -> dict:
     return state
 
 
-def new_tab_button_pref(pid: str) -> dict:
+def new_tab_button_pref(p: dict) -> dict:
     """Once per profile: move the buttons in the saved toolbar state (prefs.js,
     profile closed). A profile without a saved state gets the corrected default
     as a launch pref until Firefox saves one. A marker keeps later user
     customisation (toolbar "Customize") untouched."""
     import re
-    d = store.profile_dir(pid)
+    d = store.profile_dir(p)
     marker = d / ".newtab-fixed"
     prefs = d / "prefs.js"
     key = "browser.uiCustomization.state"
@@ -112,7 +112,7 @@ def write_badge_addon(p: dict) -> str:
     apart at a glance. windows.update(titlePreface) is browser chrome only:
     document.title and anything a page can read stay untouched. userChrome.css
     is not an option: Camoufox does not load legacy profile customizations."""
-    d = store.profile_dir(p["id"]) / "badge-addon"
+    d = store.profile_dir(p) / "badge-addon"
     d.mkdir(parents=True, exist_ok=True)
     manifest = {
         "manifest_version": 2,
@@ -396,6 +396,7 @@ async def launch(ref: str, url: str | None = None, headless: bool = False, on_re
     p = store.get(db, ref)
     if not p:
         raise SystemExit(f"profile not found: {ref}")
+    p = store.sync_dir(db, p)  # folder follows the profile name (closed now, so it can be renamed)
 
     forwarder = None
     proxy_opt = None
@@ -440,7 +441,7 @@ async def launch(ref: str, url: str | None = None, headless: bool = False, on_re
         os=p["os"],
         fingerprint=p["fingerprint"],
         persistent_context=True,
-        user_data_dir=str(store.profile_dir(p["id"])),
+        user_data_dir=str(store.profile_dir(p)),
         headless=headless,
         humanize=False,
     )
@@ -448,7 +449,7 @@ async def launch(ref: str, url: str | None = None, headless: bool = False, on_re
     # windows and tabs"; this also keeps session cookies (logins without
     # "remember me") across restarts instead of dropping them on close.
     opts["firefox_user_prefs"] = dict(SESSION_PREFS)
-    opts["firefox_user_prefs"].update(new_tab_button_pref(p["id"]))
+    opts["firefox_user_prefs"].update(new_tab_button_pref(p))
     fonts = native_host_fonts(p["os"])
     if fonts:
         opts["fonts"] = fonts
@@ -470,7 +471,7 @@ async def launch(ref: str, url: str | None = None, headless: bool = False, on_re
             # orphaned Firefox is left behind.
             _stop_requests(closed)
             await _drop_extra_blank_tabs(ctx)
-            last_tabs = store.profile_dir(p["id"]) / "last_tabs.json"
+            last_tabs = store.profile_dir(p) / "last_tabs.json"
             await _reopen_last_tabs(ctx, last_tabs)
             page = ctx.pages[0] if ctx.pages else await ctx.new_page()
             _close_with_last_window(ctx, closed, last_tabs)

@@ -94,7 +94,8 @@ def cmd_set(args, db):
         fields["locale_manual"] = 1 if args.locale else 0
     if fields:
         store.update(db, p["id"], **fields)
-    _out(args, _public(store.get(db, p["id"])), "ok")
+    p = store.sync_dir(db, store.get(db, p["id"]))  # rename follows the folder (unless the browser is open)
+    _out(args, _public(p), "ok")
 
 
 def cmd_check(args, db):

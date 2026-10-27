@@ -63,7 +63,7 @@ def profiles_running() -> bool:
 
 
 def pip_install(spec: str):
-    subprocess.check_call(["uv", "pip", "install", "--python", str(PY), "--prerelease=allow", spec])
+    subprocess.check_call(["uv", "pip", "install", "--python", str(PY), spec])  # an explicit ==0.5.9b5 pin is enough for a pre-release
 
 
 SMOKE = r'''

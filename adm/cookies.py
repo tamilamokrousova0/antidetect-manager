@@ -166,7 +166,7 @@ def to_netscape(cookies: list[dict]) -> str:
 
 def _is_running(pid: str) -> bool:
     # Firefox holds this lock while the profile is open.
-    lock = store.profile_dir(pid) / ".parentlock"
+    lock = store.profile_dir(pid) / ".parentlock"  # id or dict both work
     try:
         import fcntl
         with open(lock, "a") as f:
@@ -195,7 +195,7 @@ async def _with_context(ref: str, fn):
     async with AsyncCamoufox(
         firefox_user_prefs=prefs,
         os=p["os"], fingerprint=p["fingerprint"], persistent_context=True,
-        user_data_dir=str(store.profile_dir(p["id"])), headless=True,
+        user_data_dir=str(store.profile_dir(p)), headless=True,
         proxy=BLACKHOLE_PROXY, locale=p["locale"] or "en-US",
         i_know_what_im_doing=True,  # no geoip on purpose: offline cookie-store session
     ) as ctx:

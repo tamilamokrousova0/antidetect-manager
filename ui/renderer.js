@@ -494,4 +494,5 @@ $('#stEngineFetch').onclick = () => { $('#settings').hidden = true; $('#engine')
   await engineGate();
   if (location.hash === '#settings') { await openSettings(); $('#stAppCheck').click(); $('#stEngineCheck').click(); }
   if (location.hash.startsWith('#edit=')) { openEdit(location.hash.slice(6)); setTimeout(() => { $('#drawer').scrollTop = 1e6; }, 500); } // dev aid
+  if (location.hash.startsWith('#launch=')) window.adm.launch(location.hash.slice(8)).catch((e) => status(errText(e), true)); // dev aid
 })();
