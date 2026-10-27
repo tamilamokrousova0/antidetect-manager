@@ -40,6 +40,22 @@ SESSION_PREFS = {
     "signon.formlessCapture.enabled": True,
     "signon.generation.enabled": False,  # no "use a generated password" offers
     "browser.formfill.enable": True,  # form history (usernames, search fields)
+    # No OS re-authentication (Touch ID / Windows Hello / macOS keychain prompt
+    # "wants to access the system password storage") when a password is filled
+    # or about:logins is opened. Firefox 146+ keeps the switch in a LOCKED pref
+    # that a first-run migration derives -- inverted -- from the two legacy
+    # prefs below, so all four are set: new names for migrated profiles, legacy
+    # names for profiles whose first run is this launch.
+    "signon.management.page.os-auth.locked.enabled": False,
+    "extensions.formautofill.creditCards.os-auth.locked.enabled": False,
+    "extensions.formautofill.reauth.enabled": True,
+    "signon.management.page.os-auth.enabled": True,
+    # no "import passwords from another browser" rows / nags in the autocomplete
+    "signon.showAutoCompleteImport": "",
+    "signon.suggestImportCount": 0,
+    # no breach / vulnerable-password lookups (remote checks, extra prompts)
+    "signon.management.page.breach-alerts.enabled": False,
+    "signon.management.page.vulnerable-passwords.enabled": False,
     # Native title bar above the tabs, so the window title (which the badge
     # addon prefixes with the profile name) is actually visible on macOS.
     "browser.tabs.inTitlebar": 0,
